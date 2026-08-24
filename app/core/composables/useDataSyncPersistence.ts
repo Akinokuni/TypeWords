@@ -31,6 +31,7 @@ import { type BaseState, getDefaultBaseState, getDefaultSettingState, useBaseSto
 import type { BackupData, SaveData, Snapshot } from '../types/types.ts'
 import { SyncDataType, CompareResult, DictType } from '../types/enum'
 import { Supabase } from '../utils/supabase'
+import { fetchStoreValue, saveStoreValue } from '../utils/serverStorage'
 import { del, get, set } from 'idb-keyval'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { Toast } from '@/base'
@@ -96,7 +97,8 @@ async function getLocalPersistMeta(type: SyncDataType): Promise<LocalPersistMeta
   if (type === SyncDataType.practice_article) {
     return await getPracticeArticleCacheLocalWithMeta()
   }
-  const raw = await get(getPersistKey(type))
+  const raw = await fetchStoreValue(type as 'dict' | 'setting')
+  if (!raw) return null
   try {
     return JSON.parse(raw)
   } catch {
@@ -114,14 +116,18 @@ async function persistLocalState(type: SyncDataType, val: unknown, updated_at?: 
     await setPracticeArticleCacheLocal(val as PracticeArticleCache, updated_at)
     return
   }
-  await set(
-    getPersistKey(type),
-    JSON.stringify({
-      val,
-      version: getDataVersion(type),
-      updated_at,
-    })
-  )
+  const json = JSON.stringify({
+    val,
+    version: getDataVersion(type),
+    updated_at,
+  })
+  if (type === SyncDataType.dict) {
+    await saveStoreValue('dict', json)
+  } else if (type === SyncDataType.setting) {
+    await saveStoreValue('setting', json)
+  } else {
+    await set(getPersistKey(type), json)
+  }
 }
 
 function applyDictData(store: ReturnType<typeof useBaseStore>, data: unknown) {

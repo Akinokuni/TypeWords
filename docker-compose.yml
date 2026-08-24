@@ -1,0 +1,14 @@
+services:
+  typewords:
+    build: .
+    container_name: typewords
+    ports:
+      - "127.0.0.1:5567:5567"
+    volumes:
+      - ./data:/app/data
+    environment:
+      NODE_ENV: production
+      DATA_DIR: /app/data
+      PORT: "5567"
+      # API_TOKEN: "change-me"   # 可选：设置后 Agent/管理接口需要 Authorization: Bearer <token>
+    restart: unless-stopped

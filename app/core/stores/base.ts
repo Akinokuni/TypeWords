@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { type Dict, getDefaultDict, type SaveData, type Word } from '../types'
 import { _getStudyProgress, checkAndUpgradeSaveDict, isSameDictResource, parseJsonStr } from '../utils'
 import { shallowReactive } from 'vue'
-import { get } from 'idb-keyval'
+import { loadOrMigrate, saveStoreValue } from '../utils/serverStorage'
 import { DictId, IS_DEV, SAVE_DICT_KEY } from '../config/env'
 import type { Card } from 'ts-fsrs'
 import { useSettingStore } from './setting.ts'
@@ -188,14 +188,24 @@ export const useBaseStore = defineStore('base', {
     async init(): Promise<SaveData | null> {
       return new Promise(async resolve => {
         try {
-          let jsonStr: string = await get(SAVE_DICT_KEY.key)
+          let jsonStr: string = await loadOrMigrate('dict', SAVE_DICT_KEY.key)
           if (jsonStr) {
             let result = await parseJsonStr(jsonStr, checkAndUpgradeSaveDict)
             // console.log('data', data)
             this.setState(result.val)
             resolve(result)
+          } else {
+            // 首次启动（服务端与本地均无数据）：写入默认状态，保证 Agent 立即可读
+            await saveStoreValue(
+              'dict',
+              JSON.stringify({
+                val: getDefaultBaseState(),
+                version: SAVE_DICT_KEY.version,
+                updated_at: new Date().toISOString(),
+              })
+            )
+            resolve(null)
           }
-          resolve(null)
         } catch (e) {
           console.error('读取本地dict数据失败', e)
           resolve(null)

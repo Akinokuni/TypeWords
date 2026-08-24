@@ -85,5 +85,5 @@
 
 ## 状态
 
-- 待开始
+- 已完成（typecheck + dev 运行时验证通过）
 - 已决策：接口采用标准 REST + JSON（Agent 易读）+ OpenAPI；提供可选 `API_TOKEN`
