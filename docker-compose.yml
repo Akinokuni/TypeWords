@@ -1,6 +1,7 @@
 services:
   typewords:
     build: .
+    image: typewords:latest
     container_name: typewords
     ports:
       - "127.0.0.1:5567:5567"
