@@ -14,6 +14,9 @@ data
 .env*.local
 coverage
 .cache
+typewords.tar.gz
+*.tgz
+*.tar.gz
 apps/vscode/
 apps/vscode-web/src/
 apps/vscode-web/public/

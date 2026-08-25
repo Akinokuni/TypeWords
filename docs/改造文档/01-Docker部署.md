@@ -33,3 +33,4 @@
 
 - 已完成（typecheck + dev 运行时验证通过）
 - 已定：Node 24 镜像、端口 5567、数据目录 `/app/data`（宿主机 `./data`）
+- 镜像仓库：腾讯云 TCR（个人版）`ccr.ccs.tencentyun.com/aki-typewords/typewords:latest`；`docker-compose.yml` 的 `image` 已指向该仓库

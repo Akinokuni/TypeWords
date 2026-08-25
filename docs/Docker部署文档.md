@@ -9,6 +9,21 @@
 
 ## 2. 快速开始
 
+镜像托管于腾讯云容器镜像服务（TCR，个人版），完整地址：
+
+```
+ccr.ccs.tencentyun.com/aki-typewords/typewords:latest
+```
+
+### 方式一：拉取已构建镜像（推荐）
+
+```bash
+docker login ccr.ccs.tencentyun.com          # 首次需登录
+docker compose pull && docker compose up -d   # 拉取并后台启动
+```
+
+### 方式二：本地构建
+
 在项目根目录执行：
 
 ```bash
@@ -87,6 +102,10 @@ docker compose ps              # 查看容器状态
 docker compose restart         # 重启
 docker compose down            # 停止并删除容器（保留数据卷）
 docker compose down -v         # 停止并删除容器+数据卷（慎用，会删数据）
+
+# 构建并推送镜像到腾讯云 TCR（维护者）
+docker build -t ccr.ccs.tencentyun.com/aki-typewords/typewords:latest .
+docker push ccr.ccs.tencentyun.com/aki-typewords/typewords:latest
 ```
 
 ## 8. 排障

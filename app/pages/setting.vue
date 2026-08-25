@@ -226,7 +226,6 @@ async function importJson(str: string) {
     },
   }
   try {
-    debugger
     obj = JSON.parse(str)
     let data = obj.val
     data.dict.val = await checkAndUpgradeSaveDict(data.dict)
@@ -262,20 +261,22 @@ async function importJson(str: string) {
 }
 
 async function importData(e) {
-  importLoading = true
   let file = e.target.files[0]
-  if (!file) return (importLoading = false)
-  if (file.name.endsWith('.json')) {
-    let reader = new FileReader()
-    reader.onload = function (v) {
-      let str: any = v.target.result
-      if (str) {
-        importJson(str)
-      }
-    }
-    reader.readAsText(file)
-  } else if (file.name.endsWith('.zip')) {
-    try {
+  if (!file) return
+  if (!file.name.endsWith('.json') && !file.name.endsWith('.zip')) {
+    return Toast.error(t('unsupported_file_type'))
+  }
+  importLoading = true
+  try {
+    if (file.name.endsWith('.json')) {
+      const str = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result ?? ''))
+        reader.onerror = () => reject(new Error('读取文件失败'))
+        reader.readAsText(file)
+      })
+      await importJson(str)
+    } else {
       const JSZip = await loadJsLib('JSZip', LIB_JS_URL.JSZIP)
       const zip = await JSZip.loadAsync(file)
 
@@ -301,15 +302,12 @@ async function importData(e) {
 
       const str = await dataFile.async('string')
       await importJson(str)
-    } catch (e) {
-      Toast.error(e?.message || e || t('import_failed'))
-    } finally {
-      importLoading = false
     }
-  } else {
-    Toast.error(t('unsupported_file_type'))
+  } catch (err: any) {
+    Toast.error(err?.message || err || t('import_failed'))
+  } finally {
+    importLoading = false
   }
-  importLoading = false
 }
 
 let showBackupGate = $ref(false)
@@ -365,7 +363,6 @@ async function restoreHistoryData() {
   restoreLoading = true
   try {
     const { data: val }: Snapshot = await get(restoreTarget.key)
-    debugger
     let data: BackupData['val'] = {
       setting: JSON.parse(val.setting),
       dict: JSON.parse(val.dict),

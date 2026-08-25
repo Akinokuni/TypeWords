@@ -31,6 +31,10 @@ data
 .nuxt
 .nitro
 .cache
+
+# Docker image exports
+*.tar
+*.tar.gz
 # Misc
 .fleet
 
