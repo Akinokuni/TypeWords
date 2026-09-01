@@ -1,6 +1,6 @@
 import { get } from 'idb-keyval'
 
-export type StoreKey = 'dict' | 'setting'
+export type StoreKey = 'dict' | 'setting' | 'practice_word' | 'practice_article' | 'practice_sentence'
 
 export async function fetchStoreValue(key: StoreKey): Promise<string | null> {
   try {
@@ -12,9 +12,13 @@ export async function fetchStoreValue(key: StoreKey): Promise<string | null> {
   }
 }
 
-export async function saveStoreValue(key: StoreKey, value: string): Promise<boolean> {
+export async function saveStoreValue(
+  key: StoreKey,
+  value: string,
+  options?: { keepalive?: boolean }
+): Promise<boolean> {
   try {
-    await $fetch('/api/data/' + key, { method: 'PUT', body: { value } })
+    await $fetch('/api/data/' + key, { method: 'PUT', body: { value }, keepalive: options?.keepalive })
     return true
   } catch (e) {
     console.error('[serverStorage] save ' + key + ' failed', e)

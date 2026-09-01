@@ -79,6 +79,7 @@
 ## 涉及文件
 
 - 新增 `server/api/**/*.ts`（接口实现 + OpenAPI/health）
+- 新增 `server/api/data/[key].get.ts` / `[key].put.ts`、`server/utils/storeKeys.ts`（内部练习缓存读写，key 白名单）
 - 修改 `app/core/apis/words.ts`（作为前端调用新 API 的示例）
 - 修改 `app/core/utils/http.ts`（baseURL、拦截器适配）
 - 修改 `nuxt.config.ts`（必要时 devProxy / origin / server 配置）
@@ -87,3 +88,4 @@
 
 - 已完成（typecheck + dev 运行时验证通过）
 - 已决策：接口采用标准 REST + JSON（Agent 易读）+ OpenAPI；提供可选 `API_TOKEN`
+- 补充：内部读写接口 `/api/data/:key` 支持 `dict`/`setting`/`practice_word`/`practice_article`/`practice_sentence`（前端练习缓存双备份用）

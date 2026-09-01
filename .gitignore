@@ -27,7 +27,7 @@ report.html
 # Nuxt dev/build outputs
 .output
 .data
-data
+/data
 .nuxt
 .nitro
 .cache

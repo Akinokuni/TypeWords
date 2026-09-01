@@ -80,6 +80,7 @@ curl -H "Authorization: Bearer your-token" http://127.0.0.1:5567/api/overview
 |------|------|------|
 | GET / PUT | `/api/data/dict` | 词典数据（value 为 JSON 字符串） |
 | GET / PUT | `/api/data/setting` | 设置数据（value 为 JSON 字符串） |
+| GET / PUT | `/api/data/:key` | 练习会话缓存双备份（`key` 为 `practice_word` / `practice_article` / `practice_sentence`；value 为 JSON 字符串） |
 
 ## 5. 接口示例
 

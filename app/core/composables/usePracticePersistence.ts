@@ -8,8 +8,14 @@ import type {
   PracticeWordCacheCompact,
   PracticeWordCacheStored,
 } from '../utils/cache'
-import { getPracticeArticleCacheLocal, getPracticeWordCacheLocal } from '../utils/cache'
+import {
+  getPracticeArticleCacheLocal,
+  getPracticeWordCacheLocal,
+  PRACTICE_ARTICLE_CACHE,
+  PRACTICE_WORD_CACHE,
+} from '../utils/cache'
 import { useDataSyncPersistence } from './useDataSyncPersistence'
+import { usePracticeServerBackup } from './usePracticeServerBackup'
 import dayjs from 'dayjs'
 
 type DayGroup = { firstStart: number; totalSpend: number; daySegments: [number, number][] }
@@ -136,10 +142,15 @@ function restorePracticeWordCache(data: PracticeWordCacheStored | null): Practic
 
 export function usePracticeWordPersistence() {
   const dataSync = useDataSyncPersistence()
+  const backup = usePracticeServerBackup()
 
   async function load(): Promise<PracticeWordCache | null> {
     const res = await fetch()
-    return res ?? restorePracticeWordCache(await getPracticeWordCacheLocal())
+    if (res) return res
+    const local = await getPracticeWordCacheLocal()
+    if (local) return restorePracticeWordCache(local)
+    const restored = await backup.restoreIfAbsent('practice_word', PRACTICE_WORD_CACHE.key)
+    return restorePracticeWordCache(restored as PracticeWordCacheStored | null)
   }
 
   async function fetch(): Promise<PracticeWordCache | null> {
@@ -169,10 +180,14 @@ export function usePracticeWordPersistence() {
 
 export function usePracticeArticlePersistence() {
   const dataSync = useDataSyncPersistence()
+  const backup = usePracticeServerBackup()
 
   async function load(): Promise<PracticeArticleCache | null> {
     const res = await fetch()
-    return res ?? (await getPracticeArticleCacheLocal())
+    if (res) return res
+    const local = await getPracticeArticleCacheLocal()
+    if (local) return local
+    return (await backup.restoreIfAbsent('practice_article', PRACTICE_ARTICLE_CACHE.key)) as PracticeArticleCache | null
   }
 
   async function getLocalDataCompact(): Promise<PracticeArticleCache | null> {

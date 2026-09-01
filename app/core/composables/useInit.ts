@@ -4,6 +4,7 @@ import type { BaseState, SettingState } from '../stores'
 import { useBaseStore, useRuntimeStore, useSettingStore } from '../stores'
 import { Supabase } from '../utils/supabase'
 import { ensureHashGuardBeforeInit, useDataSyncPersistence } from './useDataSyncPersistence'
+import { usePracticeServerBackup } from './usePracticeServerBackup'
 import { SyncDataType } from '../types'
 import type { SubscriptionCallbackMutation } from 'pinia'
 import { onUnmounted } from 'vue'
@@ -16,6 +17,8 @@ export function useInit() {
   const settingStore = useSettingStore()
   const runtimeStore = useRuntimeStore()
   const dataSync = useDataSyncPersistence()
+  const practiceBackup = usePracticeServerBackup()
+  let cleanupPracticeBackup: (() => void) | null = null
   let initializing = false // 标记是否正在初始化
   let focus = true
   let fetching = false
@@ -42,6 +45,7 @@ export function useInit() {
 
   onUnmounted(() => {
     document.removeEventListener('visibilitychange', onvisibilitychange)
+    cleanupPracticeBackup?.()
   })
 
   //init 有可能重复执行，因为从老网站导了数据之后需要 init
@@ -53,6 +57,7 @@ export function useInit() {
     //先清理副作用，避免重复监听
     unsub?.()
     unsub2?.()
+    cleanupPracticeBackup?.()
     document.removeEventListener('visibilitychange', onvisibilitychange)
 
     await ensureHashGuardBeforeInit()
@@ -69,6 +74,9 @@ export function useInit() {
     store.load = true
     console.timeEnd('init')
     initializing = false // 初始化完成，允许保存数据
+
+    //启动练习缓存双备份：静止 / 离开页面时上传到服务器
+    cleanupPracticeBackup = practiceBackup.start()
 
     //等数据全部准备好，再开启监听，避免循环保存-同步
     document.addEventListener('visibilitychange', onvisibilitychange)
