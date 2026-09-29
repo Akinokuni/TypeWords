@@ -11,9 +11,9 @@ import { useRoute, useRouter } from 'vue-router'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { useInit } from '@/core/composables/useInit.ts'
 import { useI18n } from 'vue-i18n'
-import { Supabase } from '@/core/utils/supabase.ts'
 import MiniProgram from '@/components/MiniProgram.vue'
 import WordCollectPopover from '@/components/word/WordCollectPopover.vue'
+import SyncConflictDialog from '@/components/dialog/SyncConflictDialog.vue'
 
 const router = useRouter()
 const { toggleTheme, getTheme, setTheme } = useTheme()
@@ -52,7 +52,7 @@ const showIcon = $computed(() => {
 
 onMounted(() => {
   init()
-  window.umami?.track('sync', { check: Supabase.check() })
+  window.umami?.track('sync', { state: runtimeStore.syncState })
 })
 
 function onMouseEnter() {
@@ -157,7 +157,17 @@ function onMouseLeave() {
           :duration="0"
           :shadow="false"
           :showClose="false"
-          :message="$t('sync_failed_toast')"
+          :message="$t('sync_unavailable_toast')"
+        />
+      </div>
+      <!-- 离线 / 待同步提示：操作已本地生效并入队，恢复网络后自动补传 -->
+      <div class="mt-3 center relative z-9999 pointer-events-none" v-else-if="runtimeStore.isOffline">
+        <ToastComponent
+          type="error"
+          :duration="0"
+          :shadow="false"
+          :showClose="false"
+          :message="$t('sync_state_offline', { count: runtimeStore.pendingOps })"
         />
       </div>
       <!--      <slot></slot>-->
@@ -191,6 +201,8 @@ function onMouseLeave() {
       </div>
     </div>
     <WordCollectPopover />
+    <!-- 同步冲突「弹窗选边」 -->
+    <SyncConflictDialog />
   </div>
 </template>
 

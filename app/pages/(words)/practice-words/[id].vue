@@ -28,7 +28,7 @@ import {
   UnsupportedPracticeCacheVersionError,
   usePracticeWordPersistence,
 } from '@/core/composables/practice-words/practice-word-session.ts'
-import { useDataSyncPersistence } from '@/core/composables/useDataSyncPersistence.ts'
+import { useOpsSync } from '@/core/composables/useOpsSync.ts'
 import { ShortcutKey, WordPracticeMode } from '@/core/types/enum.ts'
 import WordMarkPickList, { type WordMarkPickResult } from '@/components/word/WordMarkPickList.vue'
 import {
@@ -47,7 +47,7 @@ const router = useRouter()
 const route = useRoute()
 const store = useBaseStore()
 const statStore = usePracticeStore()
-const dataSync = useDataSyncPersistence()
+const dataSync = useOpsSync()
 const wordPersistence = usePracticeWordPersistence()
 const onboardingHostRef = ref<InstanceType<typeof PracticeOnboardingHost>>()
 const notifyPractice: PracticeNotifier = (level, message) => {
@@ -356,7 +356,8 @@ async function complete() {
       session.settleLocalPractice()
 
       try {
-        await dataSync.saveDictState(store.$state, { pullWhenRemoteNewer: false })
+        // 结算产生的操作已在 settleLocalPractice 内 dispatch，这里等待推送完成
+        await dataSync.flushAll()
       } catch (error) {
         console.error('[practice] 远端结算同步失败', error)
         Toast.error('本地结算已完成，远端同步失败，可稍后重试')

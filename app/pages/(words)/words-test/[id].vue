@@ -12,6 +12,7 @@ import { useStartKeyboardEventListener } from '@/core/hooks/event.ts'
 import { ShortcutKey } from '@/core/types/enum'
 import { useSettingStore } from '@/core/stores/setting.ts'
 import { buildQuestion } from '@/core/utils/word-test'
+import { syncWrongWordAdd } from '@/core/utils/syncActions'
 import TranslationList from '@/components/word/TranslationList.vue'
 
 const route = useRoute()
@@ -84,6 +85,7 @@ function select(i: number) {
     if (!base.wrong.words.find((v: Word) => v.word.toLowerCase() === temp)) {
       base.wrong.words.push(q.candidates[q.correctIndex].word)
       base.wrong.length = base.wrong.words.length
+      syncWrongWordAdd(q.candidates[q.correctIndex].word)
     }
   }
 }

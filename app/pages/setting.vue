@@ -3,7 +3,7 @@ import { defineAsyncComponent, nextTick, ref, watch } from 'vue'
 import { useSettingStore } from '@/core/stores/setting'
 import { getShortcutKey, useEventListener } from '@/core/hooks/event'
 import { checkAndUpgradeSaveDict, checkAndUpgradeSaveSetting, cloneDeep, isEmpty, loadJsLib } from '@/core/utils'
-import { BaseButton, BaseInput, BasePage, Form, FormItem, type FormType, PopConfirm, Toast, UploadButton } from '@/base'
+import { BaseButton, BasePage, PopConfirm, Toast, UploadButton } from '@/base'
 import { useBaseStore } from '@/core/stores/base'
 import {
   APP_NAME,
@@ -28,10 +28,9 @@ import SoundSetting from '@/components/setting/SoundSetting.vue'
 import { checkAndUpgradePracticeWordCache, PRACTICE_ARTICLE_CACHE, PRACTICE_WORD_CACHE } from '@/core/utils/cache'
 import { useDataSyncPersistence } from '@/core/composables/useDataSyncPersistence'
 import SettingItem from '@/components/setting/SettingItem.vue'
-import { Supabase } from '@/core/utils/supabase.ts'
 import BackupGateDialog from '@/components/dialog/BackupGateDialog.vue'
+import { useOpsSync } from '@/core/composables/useOpsSync'
 
-import { createClient } from '@supabase/supabase-js'
 import { useRoute } from 'vue-router'
 import type { BackupData, Snapshot } from '@/core'
 
@@ -237,8 +236,8 @@ async function importJson(str: string) {
         data.setting.val.webAppVersion = data?.[APP_VERSION.key]
       }
     }
-    //需在调同步方法前面，同步方法可能报错
-    let hasRemote = Supabase.check()
+    //服务端始终可用（内置 SQLite）；推送失败时给出更明确的提示
+    let hasRemote = true
     runtimeStore.globalLoading = true
     const pushOk = await dataSyncPersistence.forcePushLocalDataToRemote(data)
     runtimeStore.globalLoading = false
@@ -312,12 +311,30 @@ async function importData(e) {
 
 let showBackupGate = $ref(false)
 let showHistoryDialog = $ref(false)
-let pendingNextAction = $ref<'import' | 'supabase_save' | 'restore_history' | ''>('')
+let pendingNextAction = $ref<'import' | 'push_local' | 'pull_remote' | 'restore_history' | ''>('')
 let historyBackups = $ref<HistoryBackupMeta[]>([])
 let restoreTarget = $ref<HistoryBackupMeta | null>(null)
 let restoreLoading = $ref(false)
-let showSbFirstSyncChoiceDialog = $ref(false)
-let sbSyncChoiceLoading = $ref(false)
+
+const opsSync = useOpsSync()
+
+/** 同步状态文案 */
+const syncStateText = $computed(() => {
+  switch (runtimeStore.syncState) {
+    case 'online':
+      return t('sync_state_online')
+    case 'syncing':
+      return t('sync_state_syncing')
+    case 'offline':
+      return t('sync_state_offline', { count: runtimeStore.pendingOps })
+    case 'unavailable':
+      return t('sync_state_unavailable')
+    case 'conflict':
+      return t('sync_state_conflict')
+    default:
+      return t('sync_state_idle')
+  }
+})
 
 function openGate(type) {
   pendingNextAction = type
@@ -350,11 +367,14 @@ function openHistoryRestoreGate(item: HistoryBackupMeta) {
   openGate('restore_history')
 }
 
-function openSupabaseSaveGate() {
-  sbFormRef?.validate(valid => {
-    if (!valid) return
-    openGate('supabase_save')
-  })
+function openPushLocalGate() {
+  if (configLoading) return
+  openGate('push_local')
+}
+
+function openPullRemoteGate() {
+  if (configLoading) return
+  openGate('pull_remote')
 }
 
 async function restoreHistoryData() {
@@ -373,8 +393,8 @@ async function restoreHistoryData() {
     data.setting.val = await checkAndUpgradeSaveSetting(data.setting)
     upgradeImportedPracticeWordCache(data)
 
-    //需在调同步方法前面，同步方法可能报错
-    let hasRemote = Supabase.check()
+    //服务端始终可用（内置 SQLite）；推送失败时给出更明确的提示
+    let hasRemote = true
     runtimeStore.globalLoading = true
     const pushOk = await dataSyncPersistence.forcePushLocalDataToRemote(data)
     runtimeStore.globalLoading = false
@@ -397,33 +417,45 @@ async function restoreHistoryData() {
   }
 }
 
-let tempSbInstance = null
-
-async function onSbFirstSyncChoice(action: 'push_local' | 'pull_remote') {
-  if (sbSyncChoiceLoading) return
-  sbSyncChoiceLoading = true
+/**
+ * 把本机数据整体覆盖到服务端（危险操作，走 BackupGateDialog 二次确认）。
+ *
+ * 这是**整文档写入**：服务端会递增 revision 并广播 `doc.replace`，其它端收到后全量重载。
+ * 同时会通知同步层推进游标（noteDocumentWrite），避免之后本端操作以过期基准提交。
+ */
+async function doPushLocalToServer() {
+  if (configLoading) return
+  showBackupGate = false
+  configLoading = true
   try {
-    if (action === 'push_local') {
-      let localData = await getExportedData()
-      const ok = await dataSyncPersistence.forcePushLocalDataToRemote(localData.val, tempSbInstance)
-      if (!ok) throw new Error(t('push_local_failed'))
-      Toast.success(t('push_local_success'))
-    } else {
-      const ok = await dataSyncPersistence.pullAllRemoteToLocal(tempSbInstance)
-      if (!ok) throw new Error(t('pull_remote_failed'))
-      Toast.success(t('pull_remote_success'))
-    }
-    Supabase.setStatus('success')
-    sbStatus = Supabase.getStatus()
-    Supabase.saveConfig(sbForm?.url, sbForm?.key)
-    showSbFirstSyncChoiceDialog = false
+    const localData = await getExportedData()
+    const ok = await dataSyncPersistence.forcePushLocalDataToRemote(localData.val)
+    if (!ok) throw new Error(t('push_local_failed'))
+    Toast.success(t('push_local_success'))
+    transferOk()
   } catch (error) {
     const msg = (error as Error)?.message ?? String(error)
-    Supabase.setStatus('error', msg)
-    sbStatus = Supabase.getStatus()
-    Toast.error(t('sync_error_with_msg') + msg)
+    Toast.error(t('error_occurred') + msg)
   } finally {
-    sbSyncChoiceLoading = false
+    configLoading = false
+  }
+}
+
+/** 用服务端数据整体覆盖本机（危险操作，走二次确认） */
+async function doPullFromServer() {
+  if (configLoading) return
+  showBackupGate = false
+  configLoading = true
+  try {
+    const ok = await dataSyncPersistence.pullAllRemoteToLocal()
+    if (!ok) throw new Error(t('pull_remote_failed'))
+    Toast.success(t('pull_remote_success'))
+    transferOk()
+  } catch (error) {
+    const msg = (error as Error)?.message ?? String(error)
+    Toast.error(t('error_occurred') + msg)
+  } finally {
+    configLoading = false
   }
 }
 
@@ -435,30 +467,7 @@ function transferOk() {
 
 async function clearAllData() {
   await dataSyncPersistence.clear()
-  Supabase.removeConfig()
-  sbForm.url = ''
-  sbForm.key = ''
-  sbStatus = { status: 'idle', statusMessage: undefined }
   Toast.success(t('clear_success'))
-}
-
-let sbFormRef = $ref<FormType>()
-const initialSbConfig = Supabase.getConfig()
-let sbForm = $ref({
-  url: initialSbConfig?.url ?? '',
-  key: initialSbConfig?.key ?? '',
-})
-let sbStatus = $ref(Supabase.getStatus())
-watch(
-  () => tabIndex,
-  () => {
-    if (tabIndex === 5) sbStatus = Supabase.getStatus()
-  }
-)
-
-let sbFormRules = {
-  url: [{ required: true, message: t('supabase_url_required'), trigger: 'blur' }],
-  key: [{ required: true, message: t('supabase_key_required'), trigger: 'blur' }],
 }
 
 //能否使用同步数据功能,如果有自定义的文章里面有音频，则不可以
@@ -477,79 +486,6 @@ const canSyncToServe = $computed(() => {
   })
   return audioFileIdList.length === 0
 })
-
-async function doSaveSbConfig() {
-  if (configLoading) return
-  showBackupGate = false
-  configLoading = true
-  tempSbInstance = createClient(sbForm?.url, sbForm?.key)
-  try {
-    // 检测 typewords_data 表是否存在
-    const { data: existingData, error: checkError } = await tempSbInstance.from('typewords_data').select('type')
-    if (checkError) {
-      Supabase.setStatus('error', checkError?.message ?? t('table_not_exist'))
-      sbStatus = Supabase.getStatus()
-      Toast.error(t('table_not_exist'))
-    } else {
-      // 表已存在，检测是否需要插入默认数据
-      const rows = (existingData ?? []) as { type: string }[]
-      const existingTypes = rows.map(d => d.type)
-      const defaultData = [
-        { type: 'dict', data: {} },
-        { type: 'setting', data: {} },
-        { type: 'practice_word', data: {} },
-        { type: 'practice_article', data: {} },
-      ]
-      for (const item of defaultData) {
-        if (!existingTypes.includes(item.type)) {
-          await (tempSbInstance as any).from('typewords_data').insert(item)
-        }
-      }
-      const { data: hasVersionData, error: versionError } = await (tempSbInstance as any)
-        .from('typewords_data')
-        .select('type, data_version')
-        .in('type', ['dict', 'setting', 'practice_word', 'practice_article'])
-        .not('data_version', 'is', null)
-      if (versionError) {
-        throw new Error(versionError?.message ?? String(versionError))
-      }
-      const hasRemoteVersionData = Array.isArray(hasVersionData) && hasVersionData.length > 0
-
-      if (hasRemoteVersionData) {
-        showSbFirstSyncChoiceDialog = true
-      } else {
-        Supabase.setStatus('success')
-        sbStatus = Supabase.getStatus()
-        await onSbFirstSyncChoice('push_local')
-        Toast.success(t('save_success'))
-        Supabase.saveConfig(sbForm?.url, sbForm?.key)
-        transferOk()
-      }
-    }
-  } catch (error) {
-    const msg = (error as Error)?.message ?? String(error)
-    Supabase.setStatus('error', msg)
-    sbStatus = Supabase.getStatus()
-    Toast.error(t('error_occurred') + msg)
-  } finally {
-    configLoading = false
-  }
-}
-
-function removeSbConfig() {
-  sbFormRef?.validate(async valid => {
-    if (valid) {
-      Supabase.removeConfig()
-      sbForm.url = ''
-      sbForm.key = ''
-      sbStatus = { status: 'idle', statusMessage: undefined }
-      Toast.success(t('clear_success'))
-      setTimeout(() => {
-        location.href = '/words'
-      }, 1000)
-    }
-  })
-}
 
 function disable360() {
   let disabled = localStorage.getItem('disable360')
@@ -663,52 +599,32 @@ function disable360() {
           </div>
 
           <div v-if="tabIndex === 6">
-            <p class="text-red font-bold">过时功能：由于经常同步失败，不再推荐继续使用，请等待官方同步功能</p>
-            <!--          Supabase 设置  -->
-            <SettingItem :title="$t('supabase_config')" :desc="$t('supabase_config_desc')">
-              <div v-if="sbStatus.status !== 'idle'" class="mt-2 text-sm">
-                <span v-if="sbStatus.status === 'success'" class="text-green">{{ $t('sync_status_running') }}</span>
-                <span v-else-if="sbStatus.status === 'error'" class="text-red">
-                  {{ $t('sync_status_failed') }}{{ sbStatus.statusMessage ? `（${sbStatus.statusMessage}）` : '' }}
-                </span>
-                <span v-else-if="sbStatus.status === 'syncing'">{{ $t('sync_status_syncing') }}</span>
+            <!-- 服务端同步 -->
+            <SettingItem :title="$t('server_sync_title')" :desc="$t('server_sync_desc')">
+              <div class="mt-2 text-sm">
+                <span :class="runtimeStore.isOffline ? 'text-red' : 'text-green'">{{ syncStateText }}</span>
+              </div>
+              <div class="mt-1 text-sm color-gray" v-if="runtimeStore.pendingOps">
+                {{ $t('server_sync_pending', { count: runtimeStore.pendingOps }) }}
+              </div>
+              <div class="mt-1 text-sm color-gray">
+                {{ $t('server_sync_device', { device: runtimeStore.deviceId || '-' }) }}
               </div>
             </SettingItem>
 
-            <div class="mb-6">
-              <div>
-                {{ $t('supabase_website') }}
-                <a href="https://supabase.com/" target="_blank">https://supabase.com/</a>
-              </div>
-              <div>
-                {{ $t('supabase_tutorial') }}
-                <a href="https://www.kdocs.cn/l/cduLx52XXXgw" target="_blank">https://www.kdocs.cn/l/cduLx52XXXgw</a>
-              </div>
-              <div>
-                {{ $t('supabase_intro', { appName: APP_NAME }) }}
-              </div>
+            <div class="mb-6 text-sm color-gray">
+              <div>{{ $t('server_sync_cross_device') }}</div>
+              <div>{{ $t('server_sync_agent') }}</div>
             </div>
 
             <div class="relative">
-              <Form ref="sbFormRef" :rules="sbFormRules" :model="sbForm">
-                <FormItem label="Url" prop="url">
-                  <BaseInput v-model="sbForm.url" />
-                </FormItem>
-                <FormItem label="Key" prop="key">
-                  <BaseInput v-model="sbForm.key" />
-                </FormItem>
-              </Form>
-              <div class="flex justify-end">
-                <BaseButton size="large" @click="removeSbConfig" :disabled="!canSyncToServe">{{
-                  $t('delete_config')
-                }}</BaseButton>
-                <BaseButton
-                  size="large"
-                  @click="openSupabaseSaveGate"
-                  :loading="configLoading"
-                  :disabled="!canSyncToServe"
-                  >{{ runtimeStore.isError ? $t('retry') : $t('save_config') }}</BaseButton
-                >
+              <div class="flex justify-end gap-2">
+                <BaseButton size="large" @click="openPullRemoteGate" :loading="configLoading" :disabled="!canSyncToServe">
+                  {{ $t('pull_remote') }}
+                </BaseButton>
+                <BaseButton size="large" @click="openPushLocalGate" :loading="configLoading" :disabled="!canSyncToServe">
+                  {{ $t('push_local') }}
+                </BaseButton>
               </div>
               <div
                 class="absolute top-0 left-0 w-full h-full bg-white opacity-80 cursor-not-allowed z-10 center rounded-md"
@@ -773,10 +689,17 @@ function disable360() {
     <template v-slot="{ disabled }">
       <BaseButton
         size="large"
-        @click="doSaveSbConfig"
+        @click="doPushLocalToServer"
         :disabled="disabled"
-        v-if="pendingNextAction === 'supabase_save'"
-        >{{ runtimeStore.isError ? $t('retry') : $t('save_config') }}</BaseButton
+        v-if="pendingNextAction === 'push_local'"
+        >{{ $t('push_local') }}</BaseButton
+      >
+      <BaseButton
+        size="large"
+        @click="doPullFromServer"
+        :disabled="disabled"
+        v-else-if="pendingNextAction === 'pull_remote'"
+        >{{ $t('pull_remote') }}</BaseButton
       >
       <BaseButton
         size="large"
@@ -816,22 +739,6 @@ function disable360() {
             }}</BaseButton>
           </div>
         </div>
-      </div>
-    </div>
-  </Dialog>
-
-  <Dialog v-model="showSbFirstSyncChoiceDialog" :title="$t('remote_data_detected_title')">
-    <div class="p-4 w-120">
-      <div class="">{{ $t('remote_data_detected_desc') }}</div>
-      <div class="color-gray mt-2">{{ $t('push_local_desc') }}</div>
-      <div class="color-gray">{{ $t('pull_remote_desc') }}</div>
-      <div class="flex justify-end mt-4">
-        <BaseButton size="large" :loading="sbSyncChoiceLoading" @click="onSbFirstSyncChoice('push_local')">{{
-          $t('push_local')
-        }}</BaseButton>
-        <BaseButton size="large" :loading="sbSyncChoiceLoading" @click="onSbFirstSyncChoice('pull_remote')">{{
-          $t('pull_remote')
-        }}</BaseButton>
       </div>
     </div>
   </Dialog>

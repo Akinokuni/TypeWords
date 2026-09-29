@@ -3,6 +3,8 @@ import { DictType, getDefaultDict, getDefaultWord } from '../types'
 import { useBaseStore } from '../stores/base.ts'
 import { useSettingStore } from '../stores/setting.ts'
 import { _getDictDataByUrl, cloneDeep, isDictIdMatch, resourceWrap, shuffle } from '../utils'
+import { thinDictForSync } from '../utils/syncShaping'
+import { dispatchOp, dispatchOps } from '../utils/opsBridge'
 import { computed, onMounted, watch } from 'vue'
 import { DICT_LIST, DictId } from '../config/env.ts'
 import { useRuntimeStore } from '../stores/runtime.ts'
@@ -19,44 +21,35 @@ export function useWordOptions() {
     return !!store.collectWord.words.find(v => v.word.toLowerCase() === val.word.toLowerCase())
   }
 
+  /**
+   * 收藏 / 取消收藏。
+   *
+   * 提交 `word.collect.set` 操作：本地立即生效，同时进入 outbox 与服务端操作日志，
+   * 与 `/api/words/:word/collect` 共用同一份 reducer。
+   */
   function toggleWordCollect(val: Word) {
-    let rIndex = store.collectWord.words.findIndex(v => v.word.toLowerCase() === val.word.toLowerCase())
-    if (rIndex > -1) {
-      store.collectWord.words.splice(rIndex, 1)
-    } else {
-      store.collectWord.words.push(val)
-    }
-    store.collectWord.length = store.collectWord.words.length
+    void dispatchOp('word.collect.set', { word: val.word, value: !isWordCollect(val), full: val })
   }
 
   function isWordSimple(val: Word) {
     return !!store.knownWordsSet.has(val.word.toLowerCase())
   }
 
+  /**
+   * 标记 / 取消「已掌握」。
+   * 与服务端 `/api/words/:word/known` 走同一份 reducer，因此「标记已掌握同时移出错词本」
+   * 这条副作用写在共用的 reducer 中，两端行为一致。
+   */
   function toggleWordSimple(val: Word) {
-    let rIndex = store.knownWords.findIndex(v => v === val.word.toLowerCase())
-    if (rIndex > -1) {
-      store.known.words.splice(rIndex, 1)
-    } else {
-      store.known.words.push(val)
-    }
-    store.known.length = store.known.words.length
+    void dispatchOp('word.known.set', { word: val.word, value: !isWordSimple(val), full: val })
   }
 
   function delWrongWord(val: Word) {
-    let rIndex = store.wrong.words.findIndex(v => v.word.toLowerCase() === val.word.toLowerCase())
-    if (rIndex > -1) {
-      store.wrong.words.splice(rIndex, 1)
-    }
-    store.wrong.length = store.wrong.words.length
+    void dispatchOp('word.wrong.remove', { word: val.word })
   }
 
   function delSimpleWord(val: Word) {
-    let rIndex = store.known.words.findIndex(v => v.word.toLowerCase() === val.word.toLowerCase())
-    if (rIndex > -1) {
-      store.known.words.splice(rIndex, 1)
-    }
-    store.known.length = store.known.words.length
+    void dispatchOp('word.known.set', { word: val.word, value: false })
   }
 
   function getCollectibleDicts(excludeDictId?: string) {
@@ -77,6 +70,11 @@ export function useWordOptions() {
     if (rIndex > -1) return { ok: false }
     target.words.push(val)
     target.length = target.words.length
+    // 目标词典内容变化：整份 words 一起提交（自定义词典/收藏本，体量有界）
+    const dictKey = target.id ?? target.enName
+    if (dictKey !== undefined && dictKey !== null && dictKey !== '') {
+      void dispatchOp('dict.content.replace', { list: 'word', dictKey, words: cloneDeep(target.words) })
+    }
     return { ok: true }
   }
 
@@ -95,6 +93,7 @@ export function useWordOptions() {
     })
     data.type = DictType.word
     store.word.bookList.push(cloneDeep(data))
+    void dispatchOp('dict.add', { list: 'word', dict: thinDictForSync(data) })
     return { ok: true, dict: data }
   }
 
@@ -118,15 +117,12 @@ export function useArticleOptions() {
     return !!store.collectArticle?.articles?.find(v => v.id === val.id)
   }
 
-  //todo 这里先收藏，再修改。收藏里面的未同步。单词也是一样的
   function toggleArticleCollect(val: Article) {
-    let rIndex = store.collectArticle.articles.findIndex(v => v.id === val.id)
-    if (rIndex > -1) {
-      store.collectArticle.articles.splice(rIndex, 1)
-    } else {
-      store.collectArticle.articles.push(val)
-    }
-    store.collectArticle.length = store.collectArticle.articles.length
+    void dispatchOp('article.collect.set', {
+      articleId: val.id,
+      value: !isArticleCollect(val),
+      full: val,
+    })
   }
 
   return {
@@ -203,6 +199,15 @@ export function getCurrentStudyWord(): TaskWords {
       waitRemoveFromFsrsData.map(word => {
         delete store.fsrsData[word]
       })
+      // 已掌握即移除记忆曲线卡片：同步到服务端，避免刷新后又出现
+      if (waitRemoveFromFsrsData.length) {
+        void dispatchOps(
+          Array.from(new Set(waitRemoveFromFsrsData)).map(word => ({
+            kind: 'word.fsrs.remove' as const,
+            payload: { word },
+          }))
+        )
+      }
       // console.log('fsrs 里 due 到期单词', reviewWordStrList)
 
       data.review = shuffle(

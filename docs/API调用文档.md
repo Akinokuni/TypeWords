@@ -68,6 +68,13 @@ curl -H "Authorization: Bearer your-token" http://127.0.0.1:5567/api/overview
 | POST | `/api/words/:word/known` | 标记/取消「已掌握」 |
 | POST | `/api/words/:word/collect` | 收藏/取消收藏 |
 | POST | `/api/words/:word/note` | 写/删单词笔记 |
+| POST | `/api/ops` | **统一操作提交入口**（与浏览器端同一份 reducer、同一套乐观并发） |
+| GET | `/api/ops?since=<revision>` | **增量拉取操作日志**（含 `changed` 判定结果） |
+| GET | `/api/ops/stream` | SSE 反向通道：服务端有新操作时推送通知 |
+
+> 所有写接口的返回体都带 `revision`（全局单调修订号）。Agent 可以：
+> ① 记录 `revision` 作为下次增量拉取的 `since`；② 提交操作时带 `baseRevision` 做乐观并发校验。
+> `POST /api/ops` 的 `opId` 全局唯一，重复提交幂等（网络重试安全）。
 
 ### 4.5 备份 / 导入
 | 方法 | 路径 | 说明 |
@@ -78,9 +85,12 @@ curl -H "Authorization: Bearer your-token" http://127.0.0.1:5567/api/overview
 ### 4.6 内部读写（前端使用，一般 Agent 不需要）
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET / PUT | `/api/data/dict` | 词典数据（value 为 JSON 字符串） |
+| GET / PUT | `/api/data/dict` | 词典数据（value 为 JSON 字符串；GET 返回 `revision`/`updatedAt`） |
 | GET / PUT | `/api/data/setting` | 设置数据（value 为 JSON 字符串） |
-| GET / PUT | `/api/data/:key` | 练习会话缓存双备份（`key` 为 `practice_word` / `practice_article` / `practice_sentence`；value 为 JSON 字符串） |
+| GET / PUT | `/api/data/:key` | 练习会话缓存双备份（`key` 为 `practice_word` / `practice_article` / `practice_sentence`；PUT 按信封内 `updated_at` 做 LWW，服务端较新时返回 `applied:false`） |
+
+> `PUT /api/data/*` 是**整文档覆盖**（权限最高），只应用于「服务端确认无数据时的首次初始化」与显式导入；
+> 日常写入请使用 `/api/ops`，否则会覆盖其它端与 Agent 的并发修改。
 
 ## 5. 接口示例
 
@@ -168,7 +178,46 @@ curl -X POST http://127.0.0.1:5567/api/words/abandon/note \
   -H "Content-Type: application/json" -d '{"note":"我的笔记"}'
 ```
 
-### 5.9 导出 / 导入
+### 5.9 操作提交与增量同步（推荐方式）
+
+浏览器端与 Agent 共用同一条通道：提交**操作**而不是整个文档，因此两端不会互相覆盖。
+
+```bash
+# ① 先取当前修订号
+curl "http://127.0.0.1:5567/api/ops?since=0" | jq '{revision, count: (.ops|length)}'
+
+# ② 提交操作（opId 唯一 => 重试幂等；baseRevision 用于按实体的乐观并发）
+curl -X POST http://127.0.0.1:5567/api/ops \
+  -H "Content-Type: application/json" -d '{
+    "scope": "dict",
+    "ops": [{
+      "opId": "agent-1-2f9c",
+      "kind": "word.known.set",
+      "payload": { "word": "abandon", "value": true },
+      "clientTs": "2026-09-29T10:00:00.000Z",
+      "baseRevision": 12,
+      "origin": "agent",
+      "entityKeys": ["word:abandon"]
+    }]
+  }'
+# 响应：{"revision":13,"applied":[{"opId":"agent-1-2f9c","revision":13,"changed":true}],"conflicts":[]}
+# changed=false 表示状态已经一致（幂等 no-op）；conflicts 非空表示同一实体被并发修改
+
+# ③ 增量拉取（用上一步的 revision 作为 since）
+curl "http://127.0.0.1:5567/api/ops?since=13"
+# 响应：{"revision":13,"mode":"ops","ops":[]}
+# mode="snapshot-required" 表示落后超过 500 条，请改用 GET /api/export 或 GET /api/data/dict 全量同步
+
+# ④ 实时通道（SSE）：有新操作时收到 {"scope":"dict","revision":N,"count":M}，随后按 ③ 拉增量
+curl -N http://127.0.0.1:5567/api/ops/stream
+```
+
+**支持的 `kind`**：`word.known.set` / `word.collect.set` / `word.wrong.add` / `word.wrong.remove` /
+`word.note.set` / `word.fsrs.set` / `word.fsrs.remove` / `dict.progress.set` / `dict.config.set` /
+`dict.meta.set` / `dict.statistics.push` / `dict.add` / `dict.remove` / `dict.content.replace` /
+`study.index.set` / `article.collect.set` / `setting.patch`。
+
+### 5.10 导出 / 导入
 ```bash
 curl http://127.0.0.1:5567/api/export   # {"dict":{...},"setting":{...}}
 

@@ -16,6 +16,7 @@ import { watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { DictType } from '@/core/types/enum.ts'
 import { usePracticeArticlePersistence } from '@/core/composables/usePracticePersistence.ts'
+import { syncDictProgress, syncDictRemove } from '@/core/utils/syncActions'
 
 dayjs.extend(isoWeek)
 dayjs.extend(isBetween)
@@ -89,6 +90,7 @@ async function init() {
       if (s.lastLearnIndex > s.length) {
         store.article.bookList[studyIndex].lastLearnIndex = s.length
         store.article.bookList[studyIndex].complete = true
+        syncDictProgress('article', s.id ?? s.enName, s.length, true)
         //todo 后续加上
         // await resetCacheData()
       }
@@ -135,6 +137,7 @@ function handleBatchDel() {
         base.article.studyIndex--
       }
       base.article.bookList.splice(r, 1)
+      syncDictRemove('article', id)
     }
   })
   selectIds = []

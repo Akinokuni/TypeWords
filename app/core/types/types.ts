@@ -87,6 +87,12 @@ export interface Article {
 }
 
 export interface Statistics {
+  /**
+   * 统计条目的稳定身份：`${sessionId}:${startDate}:${index}`。
+   * 用于跨端去重合并（append-only 并集）与离线重放幂等；历史数据可能没有该字段，
+   * 此时按内容指纹（startDate/spend/total/...）去重。
+   */
+  id?: string
   startDate: number //开始日期
   spend: number //花费时间
   total: number //单词数量

@@ -1,5 +1,6 @@
 import { computed } from 'vue'
-import { createEmptyCard, Rating } from 'ts-fsrs'
+import { nanoid } from 'nanoid'
+import { createEmptyCard, Rating, type Grade } from 'ts-fsrs'
 import { useBaseStore } from '@/core/stores/base.ts'
 import { usePracticeStore } from '@/core/stores/practice.ts'
 import { useSettingStore } from '@/core/stores/setting.ts'
@@ -11,6 +12,7 @@ import { cloneDeep, getShufflePracticeWords, shuffle } from '@/core/utils'
 import { useWordOptions } from '@/core/hooks/dict.ts'
 import { useGetGradeByWrongTimes, useNextCard } from '@/core/hooks/fsrs.ts'
 import { flushStatToStore } from '@/core/composables/usePracticePersistence.ts'
+import { dispatchOps } from '@/core/utils/opsBridge.ts'
 import {
   addWrongWordKey,
   getDefaultPracticeData,
@@ -144,6 +146,7 @@ export function usePracticeWordSession(options: PracticeWordSessionOptions) {
     }
 
     statStore.startDate = Date.now()
+    statStore.sessionId = nanoid()
     statStore.inputWordNumber = 0
     statStore.wrong = 0
     statStore.spend = 0
@@ -171,6 +174,8 @@ export function usePracticeWordSession(options: PracticeWordSessionOptions) {
       store.wrong.words.push(word)
       if (source === 'identifyTyping') identifyTypingWrongIndex = store.wrong.words.length - 1
       store.wrong.length = store.wrong.words.length
+      // 同步到服务端（reducer 幂等：本地已有则不会重复添加）
+      void dispatchOps([{ kind: 'word.wrong.add', payload: { word: word.word, full: word } }])
     }
     if (!data.wrongWords.some(item => item.word === word.word)) data.wrongWords.push(word)
     const excludeIndex = data.excludeWords.findIndex(key => key === word.word)
@@ -198,6 +203,8 @@ export function usePracticeWordSession(options: PracticeWordSessionOptions) {
       if (storedWrongIndex >= 0) store.wrong.words.splice(storedWrongIndex, 1)
     }
     store.wrong.length = store.wrong.words.length
+    // 与「认识」保持一致：服务端也把该词移出错词本
+    void dispatchOps([{ kind: 'word.wrong.remove', payload: { word: word.word } }])
     options.scheduleSave()
   }
 
@@ -272,13 +279,45 @@ export function usePracticeWordSession(options: PracticeWordSessionOptions) {
       statStore.segments[statStore.segments.length - 1][1] = Date.now()
     }
     reconcilePracticeTimer()
+    // 统计落库（内部已提交 dict.statistics.push 操作）
     flushStatToStore(statStore.$state)
 
+    // FSRS 排程：本地写卡 + 提交 word.fsrs.set 操作，服务端与其它端走同一份 reducer
+    const ops: Array<{ kind: any; payload: any }> = []
     for (const [word, wrongTimes] of Object.entries(data.wrongTimesMap)) {
       const rating = data.ratingMap[word] ?? getGradeByWrongTimes(wrongTimes)
       const card = store.fsrsData[word] ?? createEmptyCard()
-      store.fsrsData[word] = nextCard(card, rating)
+      // getGradeByWrongTimes 只会返回 Again/Hard/Good/Easy，必然是合法的 Grade
+      const next = nextCard(card, rating as Grade)
+      store.fsrsData[word] = next
+      ops.push({ kind: 'word.fsrs.set', payload: { word, card: next } })
     }
+    const dictKey = store.sdict.id ?? store.sdict.enName
+    if (dictKey !== undefined && dictKey !== null && dictKey !== '') {
+      ops.push({
+        kind: 'dict.progress.set',
+        payload: {
+          list: 'word',
+          dictKey,
+          lastLearnIndex: store.sdict.lastLearnIndex,
+          complete: store.sdict.complete,
+        },
+      })
+    }
+    if (ops.length) void dispatchOps(ops, { immediate: true })
+  }
+
+  /** 把当前词典进度提交为操作；`force` 用于「重学一遍 / 跳组」这类显式回退 */
+  function dispatchProgress(force = false) {
+    const dictKey = store.sdict.id ?? store.sdict.enName
+    if (dictKey === undefined || dictKey === null || dictKey === '') return
+    void dispatchOps([
+      {
+        kind: 'dict.progress.set',
+        payload: { list: 'word', dictKey, lastLearnIndex: store.sdict.lastLearnIndex, complete: store.sdict.complete },
+        force,
+      },
+    ])
   }
 
   function createRepeatTask(): TaskWords {
@@ -290,6 +329,7 @@ export function usePracticeWordSession(options: PracticeWordSessionOptions) {
       store.sdict.lastLearnIndex -= statStore.newWordNumber
       taskWords.new = taskWords.new.filter(word => !ignoreSet.has(word.word))
       taskWords.review = taskWords.review.filter(word => !ignoreSet.has(word.word))
+      dispatchProgress(true)
     }
     return taskWords
   }
@@ -309,12 +349,16 @@ export function usePracticeWordSession(options: PracticeWordSessionOptions) {
       }
     }
 
-    if (!wasComplete) updateCompletedDictProgress('all')
+    if (!wasComplete) {
+      updateCompletedDictProgress('all')
+      dispatchProgress()
+    }
     return createStudyTask().taskWords
   }
 
   function createTaskFromGroup(group: number): TaskWords {
     store.sdict.lastLearnIndex = (group - 1) * store.sdict.perDayStudyNumber
+    dispatchProgress(true)
     return createStudyTask().taskWords
   }
 

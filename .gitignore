@@ -45,3 +45,6 @@ report.html
 public/vscode
 apps/TypeWordsMiniApp
 *.tsbuildinfo
+
+# 端到端验证脚本使用的隔离数据目录（见 test/e2e-sync.ps1）
+.tmp-verify-data*

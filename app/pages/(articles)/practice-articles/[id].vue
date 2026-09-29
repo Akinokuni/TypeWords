@@ -31,6 +31,7 @@ import {
 } from '@/core/utils'
 import { getPracticeArticleCacheLocal } from '@/core/utils/cache.ts'
 import { usePracticeArticlePersistence } from '@/core/composables/usePracticePersistence'
+import { syncDictProgress, syncDictStatistics, syncWrongWordAdd } from '@/core/utils/syncActions'
 import { emitter, EventKey, useEvents } from '@/core/utils/eventBus'
 import { computed, onMounted, onUnmounted, provide, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -101,7 +102,11 @@ function next() {
     store.sbook.complete = true
     store.sbook.lastLearnIndex = 0
     //todo 这里应该弹窗
-  } else store.sbook.lastLearnIndex++
+    syncDictProgress('article', store.sbook.id ?? store.sbook.enName, 0, true, true)
+  } else {
+    store.sbook.lastLearnIndex++
+    syncDictProgress('article', store.sbook.id ?? store.sbook.enName, store.sbook.lastLearnIndex)
+  }
   getCurrentPractice()
 }
 
@@ -294,6 +299,8 @@ async function complete() {
     store.sdict.complete = true
   }
   store.sbook.statistics.push(data as any)
+  // 学习记录同步：服务端与其它端按 id/内容指纹去重合并，永不丢失
+  syncDictStatistics('article', store.sbook.id ?? store.sbook.enName, [data])
 
   //重置
   statStore.wrong = 0
@@ -346,6 +353,7 @@ function wrong(word: Word) {
   if (!store.wrong.words.find((v: Word) => v.word.toLowerCase() === temp)) {
     store.wrong.words.push(getDefaultWord(word))
     store.wrong.length = store.wrong.words.length
+    syncWrongWordAdd(getDefaultWord(word))
   }
 }
 
@@ -362,6 +370,7 @@ async function changeArticle(val: ArticleItem) {
   let rIndex = articleData.list.findIndex(v => v.id === val.item.id)
   if (rIndex > -1) {
     store.sbook.lastLearnIndex = rIndex
+    syncDictProgress('article', store.sbook.id ?? store.sbook.enName, rIndex, undefined, true)
     getCurrentPractice()
   }
   initAudio()
@@ -372,6 +381,7 @@ const handlePlayNext = (nextArticle: Article) => {
   let rIndex = articleData.list.findIndex(v => v.id === nextArticle.id)
   if (rIndex > -1) {
     store.sbook.lastLearnIndex = rIndex
+    syncDictProgress('article', store.sbook.id ?? store.sbook.enName, rIndex, undefined, true)
     getCurrentPractice()
   }
 }

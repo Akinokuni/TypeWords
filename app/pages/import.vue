@@ -7,6 +7,7 @@ import { DictType } from '@/core/types/enum.ts'
 import { getDefaultArticle, getDefaultDict, getDefaultWord } from '@/core/types/func.ts'
 import type { Article, Dict, Word } from '@/core/types/types.ts'
 import { cloneDeep, convertToWord, loadJsLib, resourceWrap } from '@/core/utils'
+import { syncNote } from '@/core/utils/syncActions'
 import saveAs from 'file-saver'
 import { nanoid } from 'nanoid'
 import { computed, onMounted, ref, watch } from 'vue'
@@ -691,6 +692,7 @@ function parseCustomWordRow(row: Record<string, unknown>): Word | null {
     const noteVal = getWordRowField(row, '笔记', 'note')
     if (noteVal) {
       base.noteData[word] = noteVal
+      syncNote(word, noteVal)
     }
     return parsed
   } catch (error: any) {

@@ -11,8 +11,10 @@ export function usePracticeSentencePersistence() {
 
   async function load(): Promise<PracticeSentenceCache | null> {
     const local = await getPracticeSentenceCacheLocal()
-    if (local) return local
-    return (await backup.restoreIfAbsent('practice_sentence', PRACTICE_SENTENCE_CACHE.key)) as PracticeSentenceCache | null
+    // 本地缺失或比服务端旧时恢复服务端备份（LWW）
+    const restored = await backup.restoreIfStale('practice_sentence', PRACTICE_SENTENCE_CACHE.key)
+    if (restored != null) return (await getPracticeSentenceCacheLocal()) as PracticeSentenceCache | null
+    return local
   }
 
   async function fetch(): Promise<PracticeSentenceCache | null> {

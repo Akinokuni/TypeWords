@@ -6,6 +6,11 @@ import { WordPracticeModeStageMap, WordPracticeStageNameMap } from '../config/en
 export type TimerPauseReason = null | 'manual' | 'auto_visibility' | 'auto_idle'
 
 export interface PracticeState {
+  /**
+   * 练习会话的唯一标识：统计条目用它做跨端去重，保证「学习记录只增不减」。
+   * 缓存恢复时会一并带回，因此同一次练习不会因为刷新而重复计数。
+   */
+  sessionId: string
   stage: WordPracticeStage
   startDate: number
   spend: number
@@ -30,6 +35,7 @@ export interface PracticeState {
 export const usePracticeStore = defineStore('practice', {
   state: (): PracticeState => {
     return {
+      sessionId: '',
       stage: WordPracticeStage.FollowWriteNewWord,
       spend: 0,
       startDate: Date.now(),

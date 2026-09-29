@@ -18,6 +18,9 @@ import BaseTable from '@/components/BaseTable.vue'
 import PracticeSettingDialog from '@/components/word/PracticeSettingDialog.vue'
 import WordItem from '@/components/word/WordItem.vue'
 import { flushStatToStore, usePracticeWordPersistence } from '@/core/composables/usePracticePersistence'
+import { dispatchOp } from '@/core/utils/opsBridge'
+import { thinDictForSync } from '@/core/utils/syncShaping'
+import { syncNote } from '@/core/utils/syncActions'
 import { DICT_LIST, LIB_JS_URL, TourConfig } from '@/core/config/env.ts'
 import { getCurrentStudyWord } from '@/core/hooks/dict.ts'
 import { useBaseStore } from '@/core/stores/base.ts'
@@ -161,13 +164,25 @@ function syncDictInMyStudyList(study = false) {
     let rIndex = base.word.bookList.findIndex(v => v.id === originalId)
     temp.length = temp.words.length
     runtimeStore.editDict = temp
+    const dictKey = temp.id ?? temp.enName
+    const syncable = dictKey !== undefined && dictKey !== null && String(dictKey) !== ''
     if (rIndex > -1) {
       base.word.bookList[rIndex] = getDefaultDict(temp)
       if (study) base.word.studyIndex = rIndex
+      // 词条内容整体变化（自定义词典编辑）：用 dict.content.replace 表达，避免整文档覆盖
+      if (syncable) {
+        void dispatchOp('dict.content.replace', {
+          list: 'word',
+          dictKey: String(dictKey),
+          words: thinDictForSync(getDefaultDict(temp)).words,
+        })
+      }
     } else {
       base.word.bookList.push(getDefaultDict(temp))
       if (study) base.word.studyIndex = base.word.bookList.length - 1
+      if (syncable) void dispatchOp('dict.add', { list: 'word', dict: thinDictForSync(getDefaultDict(temp)) })
     }
+    if (syncable) void dispatchOp('study.index.set', { list: 'word', dictKey: String(dictKey) })
     tableRef.value.getData()
   }, 100)
 }
@@ -181,10 +196,13 @@ async function onSubmitWord() {
       // 笔记集中存储，不保存在 Word 对象内
       const noteVal = wordForm.note?.trim()
       const wordKey = wordForm.word
+      // 笔记统一走 word.note.set（空值即删除），与服务端同一份 reducer
       if (noteVal) {
         base.noteData[wordKey] = noteVal
+        syncNote(wordKey, noteVal)
       } else {
         delete base.noteData[wordKey]
+        syncNote(wordKey, '')
       }
       //todo 可以检查的更准确些，比如json对比
       if (data.id) {

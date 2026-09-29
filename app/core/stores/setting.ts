@@ -1,8 +1,10 @@
 import { defineStore } from 'pinia'
 import { checkAndUpgradeSaveSetting, cloneDeep, parseJsonStr } from '../utils'
 import { loadOrMigrate, saveStoreValue } from '../utils/serverStorage'
+import { readShadow, writeScopeCursor, writeShadow } from '../utils/offlineOutbox'
 import { APP_VERSION, DefaultShortcutKeyMap, SAVE_SETTING_KEY } from '../config/env'
 import { IdentifyMethod, type SaveData, WordPracticeMode, WordPracticeType } from '../types'
+import { useRuntimeStore } from './runtime.ts'
 import type { FSRSParameters } from 'ts-fsrs'
 
 export interface SettingState {
@@ -170,38 +172,70 @@ export const useSettingStore = defineStore('setting', {
     setState(obj: any) {
       this.$patch(obj)
     },
+    /**
+     * 初始化设置。
+     *
+     * 与 base.init 相同的不变量：只有「请求成功且服务端确认无数据」时
+     * 才写入默认设置；请求失败时走影子副本降级或保持未初始化。
+     */
     async init(): Promise<SaveData | null> {
-      return new Promise(async resolve => {
-        try {
-          let jsonStr = await loadOrMigrate('setting', SAVE_SETTING_KEY.key)
-          if (jsonStr) {
-            let result = await parseJsonStr(jsonStr, checkAndUpgradeSaveSetting)
+      const runtimeStore = useRuntimeStore()
+      const outcome = await loadOrMigrate('setting', SAVE_SETTING_KEY.key)
 
-            //如果升级了，那么要保持本地比线上新，不然会被覆盖
-            const shouldRefreshUpdatedAt = (result.val as any)?.__updateLocalData ?? false
+      if (!outcome.ok) {
+        const shadow = await readShadow('setting')
+        if (shadow) {
+          try {
+            const result = await parseJsonStr(shadow, checkAndUpgradeSaveSetting)
             delete (result.val as any)?.__updateLocalData
-            if (shouldRefreshUpdatedAt) {
-              await saveStoreValue('setting', JSON.stringify(result))
-            }
             this.setState(result.val)
-            resolve(result)
-          } else {
-            // 首次启动：写入默认设置
-            await saveStoreValue(
-              'setting',
-              JSON.stringify({
-                val: getDefaultSettingState(),
-                version: SAVE_SETTING_KEY.version,
-                updated_at: new Date().toISOString(),
-              })
-            )
-            resolve(null)
+            if (runtimeStore.syncState !== 'unavailable') runtimeStore.syncState = 'offline'
+            console.warn('[setting.init] 后端不可达，已使用本地影子副本启动')
+            return result
+          } catch (error) {
+            console.error('[setting.init] 影子副本解析失败', error)
           }
-        } catch (e) {
-          console.error('读取本地设置数据失败', e)
-          resolve(null)
         }
+        return null
+      }
+
+      if (outcome.value) {
+        const result = await parseJsonStr(outcome.value, checkAndUpgradeSaveSetting)
+        //如果升级了，那么要保持本地比线上新，不然会被覆盖
+        const shouldRefreshUpdatedAt = (result.val as any)?.__updateLocalData ?? false
+        delete (result.val as any)?.__updateLocalData
+        if (shouldRefreshUpdatedAt) {
+          // 注意：必须把信封的 version 更新为当前版本，否则每次启动都会重复判定为「需要升级」
+          await saveStoreValue(
+            'setting',
+            JSON.stringify({ ...result, version: SAVE_SETTING_KEY.version }),
+            { label: 'setting-schema-upgrade' }
+          )
+        }
+        this.setState(result.val)
+        await writeShadow('setting', outcome.value)
+        await writeScopeCursor('setting', {
+          revision: outcome.revision,
+          updatedAt: outcome.updatedAt,
+          lastSyncedAt: Date.now(),
+        })
+        if (runtimeStore.syncState === 'idle') runtimeStore.syncState = 'online'
+        return result
+      }
+
+      // 服务端明确为空：真正的首次启动，写入默认设置
+      const seed = JSON.stringify({
+        val: getDefaultSettingState(),
+        version: SAVE_SETTING_KEY.version,
+        updated_at: new Date().toISOString(),
       })
+      const saved = await saveStoreValue('setting', seed, { label: 'seed-default-setting' })
+      if (!saved.ok) return null
+      await writeShadow('setting', seed)
+      if (saved.revision) {
+        await writeScopeCursor('setting', { revision: saved.revision, lastSyncedAt: Date.now() })
+      }
+      return null
     },
   },
 })

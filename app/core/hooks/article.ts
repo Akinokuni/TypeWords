@@ -1,6 +1,8 @@
 import type { Article, Sentence } from '../types'
 import { getDefaultArticleWord, getDefaultDict, PracticeArticleWordType } from '../types'
 import { _nextTick, cloneDeep, ensureCustomDictCopy } from '../utils'
+import { thinDictForSync } from '../utils/syncShaping'
+import { dispatchOp } from '../utils/opsBridge'
 import { usePlayWordAudio, useTTsPlayAudio } from './sound'
 import { getSentenceAllText, getSentenceAllTranslateText } from './translate'
 import { useBaseStore } from '../stores/base'
@@ -449,12 +451,25 @@ export function syncBookInMyStudyList(study = false) {
     let rIndex = base.article.bookList.findIndex(v => v.id === originalId)
     temp.length = temp.articles.length
     runtimeStore.editDict = temp
+    const dictKey = temp.id ?? temp.enName
     if (rIndex > -1) {
       base.article.bookList[rIndex] = getDefaultDict(temp)
       if (study) base.article.studyIndex = rIndex
+      // 内容整体变化（自定义书籍编辑）：用操作表达，避免整文档覆盖
+      if (dictKey !== undefined && dictKey !== null && dictKey !== '') {
+        void dispatchOp('dict.content.replace', {
+          list: 'article',
+          dictKey: String(dictKey),
+          articles: thinDictForSync(getDefaultDict(temp)).articles,
+        })
+      }
     } else {
       base.article.bookList.push(getDefaultDict(temp))
       if (study) base.article.studyIndex = base.article.bookList.length - 1
+      if (dictKey !== undefined && dictKey !== null && dictKey !== '') {
+        void dispatchOp('dict.add', { list: 'article', dict: thinDictForSync(getDefaultDict(temp)) })
+      }
     }
+    void dispatchOp('study.index.set', { list: 'article', dictKey: String(dictKey ?? '') })
   }, 100)
 }

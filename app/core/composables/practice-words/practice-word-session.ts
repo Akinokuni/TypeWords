@@ -2,16 +2,15 @@ import { useBaseStore } from '@/core/stores/base.ts'
 import { useSettingStore } from '@/core/stores/setting.ts'
 import type { PracticeState } from '@/core/stores/practice.ts'
 import type { PracticeData as LegacyPracticeData, Question, TaskWords, Word } from '@/core/types/types.ts'
-import { CompareResult, SyncDataType } from '@/core/types/enum.ts'
 import {
   checkAndUpgradePracticeWordCache,
   getPracticeWordCacheLocalWithMeta,
   PRACTICE_WORD_CACHE,
+  setPracticeWordCacheLocal,
   type LocalCacheResult,
-  type PracticeWordCacheStored,
 } from '@/core/utils/cache.ts'
-import { useDataSyncPersistence } from '@/core/composables/useDataSyncPersistence.ts'
-import { shouldFetchRemote } from '@/core/utils/index.ts'
+import { usePracticeServerBackup, flushPracticeKey } from '@/core/composables/usePracticeServerBackup.ts'
+import { fetchStoreOutcome } from '@/core/utils/serverStorage.ts'
 import type { PracticeSessionSnapshot } from './practice-flow-types.ts'
 
 export type PracticeData = Omit<LegacyPracticeData, 'isTypingWrongWord' | 'question'> & {
@@ -163,37 +162,35 @@ function restoreCurrentCache(value: unknown): PracticeWordCache | null {
   }
 }
 
+/**
+ * 单词练习会话缓存的持久化。
+ *
+ * - 本地 IndexedDB 为主，服务端备份按 updated_at 做 LWW：本地缺失或比服务端旧时恢复服务端快照。
+ * - 保存后立即尝试一次服务器备份，失败由「离开 / 静止 / 定时」通道重试。
+ */
 export function usePracticeWordPersistence() {
-  const dataSync = useDataSyncPersistence()
   const settingStore = useSettingStore()
+  const { restoreIfStale } = usePracticeServerBackup()
 
   async function save(data: PracticeWordCache | null) {
     const compact = serializePracticeWordCache(data)
-    return await dataSync.saveLocalAndSync(SyncDataType.practice_word, compact, { pullWhenRemoteNewer: false })
+    const updatedAt = new Date().toISOString()
+    // 本文件与 utils/cache 各自声明了同名 compact 类型（历史原因），此处按缓存层的结构写入
+    await setPracticeWordCacheLocal(compact as any, updatedAt)
+    // 不阻塞调用方：备份失败会由「离开/静止/定时」通道重试
+    void flushPracticeKey('practice_word', PRACTICE_WORD_CACHE.key)
   }
 
   async function load(): Promise<PracticeWordCache | null> {
-    const [local, remote] = await Promise.all([
-      getPracticeWordCacheLocalWithMeta() as Promise<LocalCacheResult<PracticeWordCacheStored> | null>,
-      dataSync.getRemoteData(SyncDataType.practice_word),
-    ])
+    let selected = (await getPracticeWordCacheLocalWithMeta()) as LocalCacheResult<unknown> | null
 
-    let selected: LocalCacheResult<unknown> | null = local
-    if (remote) {
-      const remoteCache: LocalCacheResult<unknown> = {
-        val: remote.data,
-        version: remote.data_version ?? 1,
-        updated_at: remote.updated_at,
-      }
-      if (
-        !selected ||
-        shouldFetchRemote(selected.updated_at, remoteCache.updated_at, remoteCache.version, selected.version) ===
-          CompareResult.RemoteNewer
-      ) {
-        selected = remoteCache
-      }
+    // 本地缺失或比服务端旧 → 恢复服务端备份（restoreIfStale 会把信封回写到 IndexedDB）
+    const restored = await restoreIfStale('practice_word', PRACTICE_WORD_CACHE.key)
+    if (restored != null) {
+      selected = (await getPracticeWordCacheLocalWithMeta()) as LocalCacheResult<unknown> | null
     }
     if (!selected) return null
+
     if (selected.version > PRACTICE_WORD_CACHE.version) {
       throw new UnsupportedPracticeCacheVersionError(selected.version)
     }
@@ -211,10 +208,10 @@ export function usePracticeWordPersistence() {
         await save(null)
         return null
       }
-      const restored = restoreCurrentCache(upgraded.val)
-      if (!restored) return null
-      await save(restored)
-      return restored
+      const restoredCache = restoreCurrentCache(upgraded.val)
+      if (!restoredCache) return null
+      await save(restoredCache)
+      return restoredCache
     }
 
     if (selected.val == null) return null
@@ -225,9 +222,22 @@ export function usePracticeWordPersistence() {
     return await save(null)
   }
 
+  /**
+   * 服务端备份是否比本机已知时间更新（用于「检测到其他设备的新进度」对话框）。
+   * 以服务端 `practice_word` 的写入时间为准，用于判断其它设备是否产生了更新的进度。
+   */
   async function getRemoteUpdateTime(knownUpdatedAt: number): Promise<number | null> {
-    const meta = await dataSync.getRemoteMeta(SyncDataType.practice_word)
-    return resolveNewerRemotePracticeCacheTime(meta, knownUpdatedAt)
+    const outcome = await fetchStoreOutcome('practice_word')
+    if (!outcome.ok || !outcome.value) return null
+    let serverTs = Date.parse(outcome.updatedAt ?? '')
+    if (!Number.isFinite(serverTs)) {
+      try {
+        serverTs = Date.parse(JSON.parse(outcome.value)?.updated_at ?? '')
+      } catch {
+        serverTs = Number.NaN
+      }
+    }
+    return Number.isFinite(serverTs) && serverTs > knownUpdatedAt ? serverTs : null
   }
 
   return { load, save, clear, getRemoteUpdateTime }

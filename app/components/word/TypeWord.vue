@@ -26,6 +26,7 @@ import WordLookupPopover from '@/components/word/WordLookupPopover.vue'
 import { BaseButton, BaseIcon, Textarea, Toast, ToastComponent, Tooltip, VolumeIcon } from '@/base'
 import { useI18n } from 'vue-i18n'
 import { useWordOptions } from '@/core/hooks/dict.ts'
+import { dispatchOp } from '@/core/utils/opsBridge.ts'
 import { openWordCollectPicker } from '@/core/hooks/useWordCollectPicker.ts'
 import WordTypingCore from './WordTypingCore.vue'
 import WordIdentifyPanel from './WordIdentifyPanel.vue'
@@ -171,11 +172,8 @@ function editNote() {
 }
 
 function saveNote() {
-  if (noteInputValue.trim()) {
-    store.noteData[props.word.word] = noteInputValue
-  } else {
-    delete store.noteData[props.word.word]
-  }
+  // 笔记统一通过 word.note.set 操作写入（reducer 内统一小写 key，消除两端 key 漂移）
+  void dispatchOp('word.note.set', { word: props.word.word, note: noteInputValue })
   editingNote = false
 }
 
@@ -185,7 +183,7 @@ function cancelNote() {
 }
 
 function deleteNote() {
-  delete store.noteData[props.word.word]
+  void dispatchOp('word.note.set', { word: props.word.word, note: '' })
   editingNote = false
   noteInputValue = ''
 }

@@ -30,6 +30,7 @@ import { DictType, PracticeArticleWordType } from '@/core/types/enum.ts'
 import { usePracticeWordPersistence } from '@/core/composables/usePracticePersistence.ts'
 import { getPracticeArticleCacheLocal } from '@/core/utils/cache.ts'
 import { genArticleSectionData, usePlayArticleTextAudio, usePlaySentenceAudio } from '@/core/hooks/article.ts'
+import { syncDictStatistics } from '@/core/utils/syncActions'
 import ClickableEnglishText from '@/components/word/ClickableEnglishText.vue'
 import ClickableWord from '@/components/word/ClickableWord.vue'
 import WordLookupPopover from '@/components/word/WordLookupPopover.vue'
@@ -84,6 +85,7 @@ async function startPractice() {
       wrong: cache?.statStoreData?.wrong,
     }
     store.sbook.statistics.push(data as any)
+    syncDictStatistics('article', store.sbook.id ?? store.sbook.enName, [data])
     await practice.clear()
   }
   await store.changeBook(sbook)

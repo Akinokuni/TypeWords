@@ -51,7 +51,8 @@ import {
 import PracticeWordListDialog from '@/components/word/PracticeWordListDialog.vue'
 import ShufflePracticeSettingDialog from '@/components/word/ShufflePracticeSettingDialog.vue'
 import { flushStatToStore } from '@/core/composables/usePracticePersistence'
-import { useDataSyncPersistence } from '@/core/composables/useDataSyncPersistence'
+import { useOpsSync } from '@/core/composables/useOpsSync'
+import { syncDictProgress, syncDictRemove } from '@/core/utils/syncActions'
 import { WordPracticeMode } from '@/core/types/enum.ts'
 import {
   type PracticeWordCache,
@@ -65,7 +66,7 @@ import { createStudyTask } from '@/core/composables/practice-words/study-task.ts
 const store = useBaseStore()
 const settingStore = useSettingStore()
 const wordPersistence = usePracticeWordPersistence()
-const dataSync = useDataSyncPersistence()
+const opsSync = useOpsSync()
 const router = useRouter()
 const { nav } = useNav()
 const runtimeStore = useRuntimeStore()
@@ -238,6 +239,7 @@ async function init() {
       if (s.lastLearnIndex > s.length) {
         store.word.bookList[studyIndex].lastLearnIndex = s.length
         store.word.bookList[studyIndex].complete = true
+        syncDictProgress('word', s.id ?? s.enName, s.length, true)
         await resetCacheData()
       }
     }
@@ -462,6 +464,7 @@ async function handleBatchDel() {
         store.word.studyIndex--
       }
       store.word.bookList.splice(r, 1)
+      syncDictRemove('word', id)
     }
   })
   selectIds = []
@@ -499,7 +502,8 @@ async function savePracticeSetting() {
 }
 
 async function onShufflePracticeSettingOk(setting: ShufflePracticeSetting) {
-  await dataSync.saveDictState()
+  // 写入已通过 dispatch 进入 outbox，这里只负责把它们推送到服务端
+  await opsSync.flushAll()
   await resetCacheData()
   settingStore.wordPracticeMode = editingWordPracticeMode
 
