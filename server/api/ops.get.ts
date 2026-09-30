@@ -5,9 +5,10 @@
  * 落后超过 OPS_LOG_LIMIT 条时返回 `snapshot-required`，调用方应转为全量重载。
  */
 import { readOpsSince } from '../utils/commitOps'
+import { sendCompressed } from '../utils/compress'
 
 export default defineEventHandler((event) => {
   const query = getQuery(event)
   const since = Number(query.since ?? 0)
-  return readOpsSince(Number.isFinite(since) ? since : 0)
+  return sendCompressed(event, readOpsSince(Number.isFinite(since) ? since : 0))
 })
