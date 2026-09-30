@@ -161,6 +161,21 @@ export default defineNuxtConfig({
     port: 5567,
   },
   nitro: {
+    // 预压缩 public/ 下的静态资源，由 Node 直接下发 .gz / .br，无需 CDN 参与。
+    // 词库 JSON 未压缩时单体可达 4 MB 以上，预压缩后传输量约降为三分之一。
+    compressPublicAssets: {
+      gzip: true,
+      brotli: true,
+    },
+    // public/ 默认只带 Last-Modified，浏览器每次加载都会重新校验并可能重新下载整份词库。
+    // 词库、音频、第三方库在内容变更时文件名或版本随之变化，可安全标记为长期缓存。
+    publicAssets: [
+      { baseURL: 'dicts', dir: 'public/dicts', maxAge: 60 * 60 * 24 * 30 },
+      { baseURL: 'sound', dir: 'public/sound', maxAge: 60 * 60 * 24 * 30 },
+      { baseURL: 'libs', dir: 'public/libs', maxAge: 60 * 60 * 24 * 30 },
+      { baseURL: 'imgs', dir: 'public/imgs', maxAge: 60 * 60 * 24 * 7 },
+      { baseURL: 'list', dir: 'public/list', maxAge: 60 * 10 },
+    ],
     prerender: {
       ignore: appBaseURL === '/' ? [] : [withBaseURL('/manifest.json', appBaseURL)],
     },
