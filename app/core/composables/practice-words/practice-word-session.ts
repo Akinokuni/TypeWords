@@ -224,20 +224,22 @@ export function usePracticeWordPersistence() {
 
   /**
    * 服务端备份是否比本机已知时间更新（用于「检测到其他设备的新进度」对话框）。
-   * 以服务端 `practice_word` 的写入时间为准，用于判断其它设备是否产生了更新的进度。
+   *
+   * 比较的是**信封的 `updated_at`**：它是写入该快照的客户端所记录的时间，也是本机
+   * `knownCacheUpdatedAt` 的来源。不能用数据库行的写入时间——本机每次上传都会刷新它，
+   * 于是本机自己的备份会被误判为「其他设备的新进度」，反复弹出该对话框并抢走输入焦点。
    */
   async function getRemoteUpdateTime(knownUpdatedAt: number): Promise<number | null> {
     const outcome = await fetchStoreOutcome('practice_word')
     if (!outcome.ok || !outcome.value) return null
-    let serverTs = Date.parse(outcome.updatedAt ?? '')
-    if (!Number.isFinite(serverTs)) {
-      try {
-        serverTs = Date.parse(JSON.parse(outcome.value)?.updated_at ?? '')
-      } catch {
-        serverTs = Number.NaN
-      }
+    let envelope: { version?: number; updated_at?: string } | null = null
+    try {
+      envelope = JSON.parse(outcome.value)
+    } catch {
+      return null
     }
-    return Number.isFinite(serverTs) && serverTs > knownUpdatedAt ? serverTs : null
+    // 版本更高说明服务端快照来自更新的应用版本，交由调用方提示升级
+    return resolveNewerRemotePracticeCacheTime(envelope, knownUpdatedAt)
   }
 
   return { load, save, clear, getRemoteUpdateTime }

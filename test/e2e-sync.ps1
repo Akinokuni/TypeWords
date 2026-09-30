@@ -174,6 +174,12 @@ Check '写入较旧的练习快照 => applied=false（不覆盖新进度）' ($r
 $pw = Get-Json '/api/data/practice_word'
 Check '服务端仍保存较新的快照' ($pw.value -like '*newer*') $pw.value
 
+# 内容完全相同的重复上传：不得推进 revision（否则会广播无意义的 practice.session.set）
+$revBeforeDup = (Get-Json '/api/ops?since=0').revision
+$dup = Put-Json '/api/data/practice_word' @{ value = ($newEnvelope | ConvertTo-Json -Depth 8 -Compress) }
+$revAfterDup = (Get-Json '/api/ops?since=0').revision
+Check '重复上传同一份快照 => applied=false 且 revision 不变' (($dup.applied -eq $false) -and ($revBeforeDup -eq $revAfterDup)) $dup
+
 Write-Host "`n=== 10. scope 与 kind 必须匹配（防写脏文档） ==="
 $revS = (Get-Json '/api/ops?since=0').revision
 $wrongScope = @{

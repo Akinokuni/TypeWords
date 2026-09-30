@@ -30,6 +30,11 @@ export default defineEventHandler(async (event) => {
 
   const row = getStoreRow(key)
   if (row) {
+    // 内容完全相同：直接视为「无变化」，不推进 revision、不广播。
+    // 练习缓存会在静止 / 定时 / 离开 / 保存后反复上传，重复广播会让所有端白白重新拉取。
+    if (row.value === value) {
+      return { ok: true, applied: false, updatedAt: row.updated_at }
+    }
     let stored: any = null
     try {
       stored = JSON.parse(row.value)

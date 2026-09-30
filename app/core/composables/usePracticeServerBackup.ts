@@ -36,6 +36,15 @@ function parseUpdatedAt(value: any): number {
   return Number.isFinite(ts) ? ts : 0
 }
 
+/**
+ * 已成功上传过的内容（serverKey → 上次上传的原文）。
+ *
+ * 服务端按信封的 `updated_at` 做 LWW，内容相同但时间戳相同的重复上传同样会被接受并推进
+ * revision、广播一次 `practice.session.set`。练习缓存在静止 / 定时 / 离开 / 保存后都会尝试上传，
+ * 若不做这层拦截，本机自己的备份会被反复广播，其它端与本端都要白白重新拉取。
+ */
+const lastUploadedRaw = new Map<string, string>()
+
 /** 把指定的本地练习缓存上传到服务器（供持久化层在本地保存后立即备份） */
 export async function flushPracticeKey(
   serverKey: StoreKey,
@@ -50,10 +59,14 @@ export async function flushPracticeKey(
   }
   if (local == null || local === '') return 'skipped'
   const raw = typeof local === 'string' ? local : JSON.stringify(local)
+  // 内容未变则跳过；上传失败不会记录，因此仍然会重试
+  if (lastUploadedRaw.get(serverKey) === raw) return 'skipped'
   const saved = await saveStoreValue(serverKey, raw, options)
   if (!saved.ok) return 'failed'
   // 服务端按 LWW 拒绝了更旧的快照
-  return saved.applied === false ? 'stale' : 'ok'
+  if (saved.applied === false) return 'stale'
+  lastUploadedRaw.set(serverKey, raw)
+  return 'ok'
 }
 
 /**
