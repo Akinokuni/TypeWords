@@ -162,10 +162,15 @@ export function usePracticeWordTyping(options: PracticeWordTypingOptions) {
       if (isSpace(event)) {
         if (isWordCorrect.value) {
           clearJumpTimer()
-          if (wordCompletedTime.value && now() - wordCompletedTime.value < settings.spaceCooldownTime) return
-          // 跟写/拼写开启「自动下一个」时，完成单词会先计入冷却再自动推进；
-          // 空格在此刻直接完成当前词，使自动推进未能生效时（例如挂起的定时器被取消）
-          // 仍可按空格继续，而不是停在这里没有任何反应。
+          // 自动切换由 waitTimeForChangeWord 控制；spaceCooldownTime 只约束手动切换。
+          if (
+            !settings.autoNextWord &&
+            wordCompletedTime.value &&
+            now() - wordCompletedTime.value < settings.spaceCooldownTime
+          ) {
+            return
+          }
+          // 自动推进未能生效时（例如挂起的定时器被取消），空格仍可完成当前词。
           completeTypeWord(false)
           inputLock.value = false
         } else if (options.getShowWordResult()) {
