@@ -74,7 +74,6 @@ const {
   backspace,
   reset,
   setWordTestResult,
-  clearDeferredTimers,
 } = typing
 
 const displayWord = $computed(() => props.word.word.slice(input.value.length + wrong.value.length))
@@ -135,7 +134,6 @@ watch(
 watch([input, () => props.showFullWord, () => props.practiceType], checkCursorPosition)
 
 function deactivate() {
-  clearDeferredTimers()
   emitter.off(EventKey.resetWord, onResetWord)
   emitter.off(EventKey.onTyping, onTyping)
 }
