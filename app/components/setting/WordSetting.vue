@@ -53,9 +53,6 @@ const settingStore = useSettingStore()
 
     <div class="line"></div>
     <SettingItem :mainTitle="`例句设置`" />
-    <SettingItem :title="$t('practice_sentence')">
-      <Switch v-model="settingStore.practiceSentence" />
-    </SettingItem>
     <SettingItem :title="$t('auto_play_first_sentence')" :desc="$t('auto_play_first_sentence_desc')">
       <Switch v-model="settingStore.autoPlayFirstSentence" />
     </SettingItem>

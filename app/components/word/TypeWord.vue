@@ -67,7 +67,6 @@ const store = useBaseStore()
 const playWordAudio = usePlayWordAudio()
 
 const volumeIconRef: any = $ref()
-let isTypingWord = $ref(true)
 
 const typingCoreRef = $ref<InstanceType<typeof WordTypingCore>>()
 const wordMetaPanelRef = $ref<InstanceType<typeof WordMetaPanel>>()
@@ -98,14 +97,6 @@ function playWord(trigger: WordPlayTrigger) {
 }
 
 function onTypingCoreComplete() {
-  if (
-    [WordPracticeType.FollowWrite, WordPracticeType.Spell].includes(props.practiceType) &&
-    settingStore.practiceSentence &&
-    props.word.sentences.length
-  ) {
-    isTypingWord = false
-    return wordMetaPanelRef.startPracticeSentence()
-  }
   emit('complete')
 }
 
@@ -115,11 +106,6 @@ function onTypingCoreWrong() {
     return
   }
   emit('wrong')
-}
-
-function onSentencePracticeComplete() {
-  isTypingWord = true
-  emit('complete')
 }
 
 // ============ 单词操作 ============
@@ -267,7 +253,6 @@ useOnKeyboardEventListener(
 )
 
 function onResetWord() {
-  isTypingWord = true
   typeWordController.reset()
   editingNote = false
   noteInputValue = ''
@@ -349,7 +334,7 @@ useEvents([
           <WordTypingCore
             ref="typingCoreRef"
             :word="word"
-            :active="isTypingWord && !editingNote"
+            :active="!editingNote"
             :practiceType="practiceType"
             :isWordMasked="effective.isWordMasked"
             v-model:showWordResult="showWordResult"
@@ -455,13 +440,7 @@ useEvents([
 
       <!-- WordMetaPanel: 翻译 + 例句 + 短语 + 词源 等展示 -->
       <!--      不要加key，里面有个只显示一次的变量-->
-      <WordMetaPanel
-        ref="wordMetaPanelRef"
-        :word="word"
-        @complete="onSentencePracticeComplete"
-        :effective="effective"
-        @wrong="emit('wrong')"
-      />
+      <WordMetaPanel ref="wordMetaPanelRef" :word="word" :effective="effective" />
     </div>
     <WordLookupPopover />
   </div>

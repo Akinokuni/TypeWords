@@ -38,11 +38,6 @@ const props = withDefaults(defineProps<IProps>(), {
   word: () => getDefaultWord(),
 })
 
-const emit = defineEmits<{
-  complete: []
-  wrong: []
-}>()
-
 const settingStore = useSettingStore()
 const router = useRouter()
 const ttsPlayAudio = useTTsPlayAudio()
@@ -61,7 +56,6 @@ const showEtymology = computed(
       !props.effective.isWordMasked &&
       props.effective.isShowTranslate)
 )
-let activeSentenceIndex = $ref(-1)
 let sentenceRefMap = new Map()
 function setRef(index, el) {
   if (el) {
@@ -127,23 +121,7 @@ watch(
   }
 )
 
-function onCompleteSentence(text: string) {
-  //简单比对，句子里面是否有当前单词，没有则为错
-  if (!text.includes(props.word.word)) emit('wrong')
-  if (activeSentenceIndex < props.word.sentences.length - 1) {
-    activeSentenceIndex++
-  } else {
-    activeSentenceIndex = -1
-    emit('complete')
-    // Toast.success('句子练习完成')
-  }
-}
-
-function startPracticeSentence() {
-  activeSentenceIndex = 0
-}
-
-defineExpose({ startPracticeSentence, playSentence })
+defineExpose({ playSentence })
 </script>
 
 <template>
@@ -162,7 +140,7 @@ defineExpose({ startPracticeSentence, playSentence })
         <div
           class="sentence-typing"
           :class="{
-            'sentence-highlight': highlightedSentenceIndex === j || activeSentenceIndex === j,
+            'sentence-highlight': highlightedSentenceIndex === j,
           }"
           v-for="(i, j) in word.sentences"
           :key="i.c"
@@ -174,9 +152,7 @@ defineExpose({ startPracticeSentence, playSentence })
             :sentence="i"
             :isHighlightWordsMask="effective.isWordMasked"
             :showSentenceTranslation="showTranslation"
-            :active="activeSentenceIndex === j"
             :highlight-words="[word.word.toLowerCase()]"
-            @complete="onCompleteSentence"
             @play="playSentence(j, { highlight: true })"
           />
         </div>
