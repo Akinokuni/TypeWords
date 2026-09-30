@@ -288,6 +288,13 @@ function openCollectPicker(e: MouseEvent) {
 
 const isCollect = $computed(() => isWordCollect(props.word))
 const isSimple = $computed(() => isWordSimple(props.word))
+const showNote = $computed(() => {
+  if (editingNote) return true
+  if (store.noteData[props.word.word]?.trim()) {
+    return settingStore.alwaysShowNote ? true : props.practiceType === WordPracticeType.FollowWrite
+  }
+  return false
+})
 
 function collect() {
   toggleWordCollect(props.word)
@@ -395,7 +402,7 @@ useEvents([
       </div>
 
       <!-- 笔记编辑区 -->
-      <template v-if="editingNote || store.noteData[word.word]?.trim()">
+      <template v-if="showNote">
         <div class="flex flex-col gap-2 w-full mt-4">
           <div class="flex">
             <div class="label">笔记</div>
@@ -496,12 +503,11 @@ useEvents([
 
   .label {
     width: 6rem;
-    padding-top: 0.2rem;
     flex-shrink: 0;
   }
 
   .note-content {
-    @apply text-base whitespace-pre-wrap;
+    @apply whitespace-pre-wrap;
   }
 }
 

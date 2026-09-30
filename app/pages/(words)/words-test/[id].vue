@@ -67,6 +67,8 @@ async function init() {
   console.log('questions', questions)
   index = 0
 
+  if (settingStore.wordSound) playCurrentWord(false)
+
   Toast.info('可以按快捷键进行选择,例如按快捷键[' + aShortcutKey + ']选择A', { duration: 3000 })
 }
 
@@ -92,11 +94,19 @@ function select(i: number) {
 
 const { nav } = useNav()
 
+function playCurrentWord(handle = true) {
+  const question = questions[index]
+  if (!question) return
+  const word = question.candidates[question.correctIndex]?.word.word
+  if (word) playWordAudio(word, handle)
+}
+
 function next() {
   submitted = false
   selectedIndex = -1
   if (no >= testWords.length) {
     nav('/words')
+    return
   }
   if (no < total) index++
   else {
@@ -104,6 +114,7 @@ function next() {
     index = 0
     questions = testWords.slice(pageNo * pageSize, (pageNo + 1) * pageSize).map(w => buildQuestion(w, allWords))
   }
+  if (settingStore.wordSound) playCurrentWord(false)
 }
 
 function end() {
@@ -118,6 +129,7 @@ useEvents([
   [ShortcutKey.ChooseC, () => select(2)],
   [ShortcutKey.ChooseD, () => select(3)],
   [ShortcutKey.Next, () => next()],
+  [ShortcutKey.PlayWordPronunciation, () => playCurrentWord()],
 ])
 
 const settingStore = useSettingStore()
@@ -144,7 +156,11 @@ onMounted(init)
       <div v-if="questions.length" class="flex flex-col gap-4">
         <div class="text-4xl en-article-family flex items-center gap-2">
           <span>{{ questions[index].candidates[questions[index].correctIndex].word.word }}</span>
-          <VolumeIcon :simple="true" :title="'发音'" :cb="() => playWordAudio(questions[index].candidates[questions[index].correctIndex].word.word)" />
+          <VolumeIcon
+            :simple="true"
+            :title="`发音(${settingStore.shortcutKeyMap[ShortcutKey.PlayWordPronunciation]})`"
+            :cb="playCurrentWord"
+          />
         </div>
         <div class="grid gap-6">
           <div
@@ -153,19 +169,24 @@ onMounted(init)
             class="option border rounded cursor-pointer"
             :class="{
               'text-green-600': submitted && i === questions[index].correctIndex,
-              'text-red-600':
-                submitted &&
-                i === selectedIndex &&
-                i !== questions[index].correctIndex,
+              'text-red-600': submitted && i === selectedIndex && i !== questions[index].correctIndex,
             }"
-            @click="select(i)"
+            @click="submitted ? playWordAudio(opt.word.word) : select(i)"
           >
             <span class="">
               <span class="italic">{{ ['A', 'B', 'C', 'D'][i] }}</span>
               <span class="mx-2">[{{ [aShortcutKey, bShortcutKey, cShortcutKey, dShortcutKey][i] }}]</span>
               <TranslationList :word="opt.word" :show-full="false"></TranslationList>
             </span>
-            <div class="" v-opacity="submitted">{{ opt.word.word }}</div>
+            <div
+              class="flex items-center gap-2"
+              :class="{ 'cursor-pointer': submitted }"
+              v-opacity="submitted"
+              @click.stop="submitted && playWordAudio(opt.word.word)"
+            >
+              <span>{{ opt.word.word }}</span>
+              <VolumeIcon v-if="submitted" :simple="true" :title="'发音'" :cb="() => playWordAudio(opt.word.word)" />
+            </div>
           </div>
         </div>
 
