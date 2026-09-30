@@ -224,7 +224,7 @@ test('scope 推导：setting.patch 属于 setting 文档，其余属于 dict（�
 })
 
 test('shared/ 不得依赖 Vue / Nitro（SSR 安全约束）', () => {
-  for (const file of ['applyOperation.ts', join('..', 'types', 'ops.ts')]) {
+  for (const file of ['applyOperation.ts', 'practiceCacheTime.ts', join('..', 'types', 'ops.ts')]) {
     const source = readFileSync(join(here, '..', 'shared', 'domain', file), 'utf8')
     assert.doesNotMatch(source, /from ['"](vue|pinia|h3|#imports|nuxt)['"]/, `${file} 引入了不允许的依赖`)
   }

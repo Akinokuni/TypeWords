@@ -11,7 +11,14 @@ import {
 } from '@/core/utils/cache.ts'
 import { usePracticeServerBackup, flushPracticeKey } from '@/core/composables/usePracticeServerBackup.ts'
 import { fetchStoreOutcome } from '@/core/utils/serverStorage.ts'
+import {
+  resolveNewerRemotePracticeCacheTime,
+  UnsupportedPracticeCacheVersionError,
+  type PracticeCacheEnvelopeMeta,
+} from '#shared/domain/practiceCacheTime'
 import type { PracticeSessionSnapshot } from './practice-flow-types.ts'
+
+export { resolveNewerRemotePracticeCacheTime, UnsupportedPracticeCacheVersionError }
 
 export type PracticeData = Omit<LegacyPracticeData, 'isTypingWrongWord' | 'question'> & {
   question: Question | null
@@ -34,30 +41,10 @@ export type PracticeWordCacheCompact = {
   sessionSnapshot?: PracticeSessionSnapshot
 }
 
-export class UnsupportedPracticeCacheVersionError extends Error {
-  constructor(public readonly version: number) {
-    super(`UNSUPPORTED_PRACTICE_CACHE_VERSION:${version}`)
-  }
-}
-
 export function addWrongWordKey(target: string[], word: string): boolean {
   if (!word || target.includes(word)) return false
   target.push(word)
   return true
-}
-
-export function resolveNewerRemotePracticeCacheTime(
-  meta: { data_version?: number; updated_at?: string } | null,
-  knownUpdatedAt: number
-): number | null {
-  if (!meta) return null
-  const version = meta.data_version ?? 1
-  if (version > PRACTICE_WORD_CACHE.version) {
-    throw new UnsupportedPracticeCacheVersionError(version)
-  }
-  if (version !== PRACTICE_WORD_CACHE.version) return null
-  const remoteUpdatedAt = Date.parse(meta.updated_at ?? '')
-  return Number.isFinite(remoteUpdatedAt) && remoteUpdatedAt > knownUpdatedAt ? remoteUpdatedAt : null
 }
 
 export function getDefaultPracticeData(origin?: Partial<PracticeData>, val?: Partial<PracticeData>): PracticeData {
@@ -232,14 +219,14 @@ export function usePracticeWordPersistence() {
   async function getRemoteUpdateTime(knownUpdatedAt: number): Promise<number | null> {
     const outcome = await fetchStoreOutcome('practice_word')
     if (!outcome.ok || !outcome.value) return null
-    let envelope: { version?: number; updated_at?: string } | null = null
+    let envelope: PracticeCacheEnvelopeMeta | null = null
     try {
       envelope = JSON.parse(outcome.value)
     } catch {
       return null
     }
     // 版本更高说明服务端快照来自更新的应用版本，交由调用方提示升级
-    return resolveNewerRemotePracticeCacheTime(envelope, knownUpdatedAt)
+    return resolveNewerRemotePracticeCacheTime(envelope, knownUpdatedAt, PRACTICE_WORD_CACHE.version)
   }
 
   return { load, save, clear, getRemoteUpdateTime }

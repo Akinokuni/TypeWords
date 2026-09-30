@@ -117,8 +117,11 @@ export function usePracticeServerBackup() {
       local = null
     }
     const localTs = parseUpdatedAt(local)
-    const serverTs = parseUpdatedAt(server) || Date.parse(outcome.updatedAt ?? '') || 0
-    if (serverTs <= localTs) return null
+    // 只信信封的 updated_at：它由写入该快照的客户端记录，是本机比较「谁更新」的依据。
+    // 数据库行的写入时间不可用——本机每次上传都会刷新它，会让自己的备份被判成「服务端更新」，
+    // 从而用同一份数据反复覆盖本地并打扰练习。
+    const serverTs = parseUpdatedAt(server)
+    if (!serverTs || serverTs <= localTs) return null
 
     await set(idbKey, outcome.value)
     return server?.val ?? null
