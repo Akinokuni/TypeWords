@@ -23,6 +23,11 @@ export interface LoadOutcome {
   value: string | null
   revision: number
   updatedAt: string | null
+  /**
+   * 服务端确认本地副本仍是最新，因此**没有**返回正文。
+   * 此时 `value` 为 null 但语义是「继续用本地副本」，与「服务端无数据」截然不同。
+   */
+  unchanged?: boolean
   /** 仅当 ok === false 时有值 */
   error?: unknown
 }
@@ -42,11 +47,21 @@ export interface SaveResult {
 }
 
 /** 读取服务端数据，同时带回 revision（失败时 ok=false，绝不伪装成「无数据」） */
-export async function fetchStoreOutcome(key: StoreKey): Promise<LoadOutcome> {
+export async function fetchStoreOutcome(key: StoreKey, knownUpdatedAt?: string | null): Promise<LoadOutcome> {
   try {
-    const res = await $fetch<{ value: string | null; revision?: number; updatedAt?: string | null }>(
-      '/api/data/' + key
-    )
+    const res = await $fetch<{
+      value?: string | null
+      revision?: number
+      updatedAt?: string | null
+      unchanged?: boolean
+    }>('/api/data/' + key, {
+      // 携带本地副本的时间戳：服务端判定未变化时只回标记，避免重复下载整份文档
+      query: knownUpdatedAt ? { knownUpdatedAt } : undefined,
+    })
+    if (res?.unchanged) {
+      // 「未变化」不是「无数据」：调用方必须据此继续使用本地副本，而不是回落到默认状态
+      return { ok: true, value: null, revision: Number(res?.revision) || 0, updatedAt: res?.updatedAt ?? null, unchanged: true }
+    }
     return {
       ok: true,
       value: res?.value ?? null,
@@ -93,11 +108,22 @@ export async function saveStoreValue(
  * 优先读服务端；**仅当服务端明确确认没有数据**时，才回退到 IndexedDB 里的历史数据并迁移。
  *
  * 「仅确认空才迁移」是硬约束：读失败时若回退并上传，会用陈旧的本地数据覆盖服务端数据。
+ *
+ * `knownUpdatedAt` 为本地副本的文档时间戳：服务端据此判断内容未变化时不再下发正文，
+ * 返回 `unchanged`，由调用方直接复用本地副本。这条路径**不会**触发迁移，
+ * 因为「未变化」不代表「服务端无数据」。
  */
-export async function loadOrMigrate(key: StoreKey, idbKey: string): Promise<LoadOrMigrateOutcome> {
-  const outcome = await fetchStoreOutcome(key)
+export async function loadOrMigrate(
+  key: StoreKey,
+  idbKey: string,
+  knownUpdatedAt?: string | null
+): Promise<LoadOrMigrateOutcome> {
+  const outcome = await fetchStoreOutcome(key, knownUpdatedAt)
   if (!outcome.ok) {
     return { ok: false, value: null, revision: 0, updatedAt: null, error: outcome.error }
+  }
+  if (outcome.unchanged) {
+    return { ok: true, value: null, revision: outcome.revision, updatedAt: outcome.updatedAt, unchanged: true, migrated: false }
   }
   if (outcome.value) {
     return { ok: true, value: outcome.value, revision: outcome.revision, updatedAt: outcome.updatedAt, migrated: false }

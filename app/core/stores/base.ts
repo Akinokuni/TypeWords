@@ -9,7 +9,7 @@ import {
 import { thinDictForSync } from '../utils/syncShaping'
 import { shallowReactive } from 'vue'
 import { loadOrMigrate, saveStoreValue } from '../utils/serverStorage'
-import { readShadow, writeScopeCursor, writeShadow } from '../utils/offlineOutbox'
+import { readScopeCursor, readShadow, writeScopeCursor, writeShadow } from '../utils/offlineOutbox'
 import { dispatchOps } from '../utils/opsBridge'
 import { DictId, IS_DEV, SAVE_DICT_KEY } from '../config/env'
 import type { Card } from 'ts-fsrs'
@@ -203,7 +203,9 @@ export const useBaseStore = defineStore('base', {
      */
     async init(): Promise<SaveData | null> {
       const runtimeStore = useRuntimeStore()
-      const outcome = await loadOrMigrate('dict', SAVE_DICT_KEY.key)
+      // 带上本地副本的文档时间戳：服务端判定未变化时不下发正文，省去整份词库的传输
+      const cursor = await readScopeCursor('dict')
+      const outcome = await loadOrMigrate('dict', SAVE_DICT_KEY.key, cursor.updatedAt)
 
       if (!outcome.ok) {
         const shadow = await readShadow('dict')
@@ -220,6 +222,37 @@ export const useBaseStore = defineStore('base', {
         }
         runtimeStore.syncState = 'unavailable'
         console.error('[base.init] 后端不可达且无本地副本：保持未初始化，拒绝写入默认状态以免覆盖服务端数据')
+        return null
+      }
+
+      if (outcome.unchanged) {
+        const shadow = await readShadow('dict')
+        if (shadow) {
+          try {
+            const result = await parseJsonStr(shadow, checkAndUpgradeSaveDict)
+            this.setState(result.val)
+            runtimeStore.syncState = 'online'
+            return result
+          } catch (error) {
+            console.error('[base.init] 服务端判定未变化，但本地影子副本解析失败', error)
+          }
+        }
+        // 影子副本缺失或损坏：退回完整拉取，避免把「未变化」误当成「无数据」而写入默认状态
+        const full = await loadOrMigrate('dict', SAVE_DICT_KEY.key)
+        if (full.ok && full.value) {
+          const result = await parseJsonStr(full.value, checkAndUpgradeSaveDict)
+          this.setState(result.val)
+          await writeShadow('dict', full.value)
+          await writeScopeCursor('dict', {
+            revision: full.revision,
+            updatedAt: full.updatedAt,
+            lastSyncedAt: Date.now(),
+          })
+          runtimeStore.syncState = 'online'
+          return result
+        }
+        runtimeStore.syncState = 'offline'
+        console.warn('[base.init] 服务端判定未变化，但本地无可用副本且补充拉取未成功')
         return null
       }
 

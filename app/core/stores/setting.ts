@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { checkAndUpgradeSaveSetting, cloneDeep, parseJsonStr } from '../utils'
 import { loadOrMigrate, saveStoreValue } from '../utils/serverStorage'
-import { readShadow, writeScopeCursor, writeShadow } from '../utils/offlineOutbox'
+import { readScopeCursor, readShadow, writeScopeCursor, writeShadow } from '../utils/offlineOutbox'
 import { APP_VERSION, DefaultShortcutKeyMap, SAVE_SETTING_KEY } from '../config/env'
 import { IdentifyMethod, type SaveData, WordPracticeMode, WordPracticeType } from '../types'
 import { useRuntimeStore } from './runtime.ts'
@@ -182,7 +182,9 @@ export const useSettingStore = defineStore('setting', {
      */
     async init(): Promise<SaveData | null> {
       const runtimeStore = useRuntimeStore()
-      const outcome = await loadOrMigrate('setting', SAVE_SETTING_KEY.key)
+      // 带上本地副本的文档时间戳：服务端判定未变化时不下发正文
+      const cursor = await readScopeCursor('setting')
+      const outcome = await loadOrMigrate('setting', SAVE_SETTING_KEY.key, cursor.updatedAt)
 
       if (!outcome.ok) {
         const shadow = await readShadow('setting')
@@ -197,6 +199,37 @@ export const useSettingStore = defineStore('setting', {
           } catch (error) {
             console.error('[setting.init] 影子副本解析失败', error)
           }
+        }
+        return null
+      }
+
+      if (outcome.unchanged) {
+        const shadow = await readShadow('setting')
+        if (shadow) {
+          try {
+            const result = await parseJsonStr(shadow, checkAndUpgradeSaveSetting)
+            delete (result.val as any)?.__updateLocalData
+            this.setState(result.val)
+            if (runtimeStore.syncState === 'idle') runtimeStore.syncState = 'online'
+            return result
+          } catch (error) {
+            console.error('[setting.init] 服务端判定未变化，但本地影子副本解析失败', error)
+          }
+        }
+        // 影子副本缺失：退回完整拉取，避免把「未变化」误当成「无数据」而写入默认设置
+        const full = await loadOrMigrate('setting', SAVE_SETTING_KEY.key)
+        if (full.ok && full.value) {
+          const result = await parseJsonStr(full.value, checkAndUpgradeSaveSetting)
+          delete (result.val as any)?.__updateLocalData
+          this.setState(result.val)
+          await writeShadow('setting', full.value)
+          await writeScopeCursor('setting', {
+            revision: full.revision,
+            updatedAt: full.updatedAt,
+            lastSyncedAt: Date.now(),
+          })
+          if (runtimeStore.syncState === 'idle') runtimeStore.syncState = 'online'
+          return result
         }
         return null
       }
